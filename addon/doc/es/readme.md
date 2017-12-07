@@ -13,13 +13,20 @@ complemento][4]. Para los desarrolladores que busquen cómo compilar el
 complemento, consulta buildInstructions.txt localizado en la raíz del
 repositorio del código fuente del complemento.
 
-IMPORTANTE: Este complemento requiere de NVDA 2017.1 o posterior y de
-StationPlaylist Studio 5.10 o posterior. Si estás utilizando Windows 8 y
-posterior, para una mejor experiencia, deshabilita el modo de atenuación de
-audio. También, el complemento 8.0/16.10 requiere de Studio 5.10 y
-posterior, y para transmisores que utilicen Studio 5.0x, y/o Windows XP,
-Vista o 7 sin Service Pack 1, una versión de soporte long-term (15.x) está
-disponible.
+NOTAS IMPORTANTES:
+
+* Este complemento requiere de NVDA 2017.1 o posterior y StationPlaylist
+  Studio 5.10 o posterior.
+* Si utilizas Windows 8 o posterior, para una mejor experiencia, deshabilita
+  el modo atenuación de audio.
+* El complemento 8.0/16.10 requiere de Studio 5.10 o posterior. Para
+  transmisores que utilicen Studio 5.0x y/o Windows XP, Vista o 7 sin
+  Service Pack 1, está disponible una versión de soporte extendido
+  (15.x). La última versión estable para soportar versiones de Windows
+  anteriores a 7 Service Pack 1 es 17.11.2.
+* A partir de 2018, los registros de cambios para versiones antiguas se
+  encontrarán en GitHub. Este readme del complemento listará cambios desde
+  la versión 5.0 (2015 onwards).
 
 ## Teclas de atajo
 
@@ -208,13 +215,17 @@ Las órdenes disponibles para el SPL Controller son:
   la biblioteca.
 * Pulsa C para permitir a NVDA anunciar el nombre y la duración de la pista
   actualmente en reproducción.
+* Pulsa Shift+C para permitir a NVDA anunciar el nombre y la duración de la
+  pista actualmente en reproducción si la hay.
 * Pulsa E para obtener una cuenta y etiquetas de los codificadores que están
   siendo monitorizados.
 * Pulsa I para obtener el recuento de oyentes.
 * Pulsa Q para obtener información de estado variada acerca de Studio
   incluyendo si una pista se está reproduciendo, si el micrófono está
   encendido y otra.
-* Pulsa F1 para mostrar un diálogo de ayuda que liste  las órdenes
+* Pulsa las teclas de cart (F1, Control+1, por ejemplo) para reproducir
+  carts asignados desde cualquier lugar.
+* Pulsa H para mostrar un diálogo de ayuda que liste  las órdenes
   disponibles.
 
 ## Alarmas de pista
@@ -297,11 +308,42 @@ realizar algunas órdenes de Studio desde la pantalla táctil. Primero utiliza
 un toque con tres dedos para cambiar a modo SPL, entonces utiliza las
 órdenes táctiles listadas arriba para llevar a cabo tareas.
 
-## Versión 17.11/15.10-LTS
+## Versión 17.12
+
+* Se requiere Windows 7 Service Pack 1 o posterior.
+* Se mejoraron varias características del complemento con puntos de
+  extensión. Esto permite que las características alarma del micrófono y
+  streaming de metadatos respondan a cambios en perfiles de
+  retransmisión. Esto requiere NVDA 2017.4.
+* Cuando se salga de Studio, varios diálogos del complemento tales como
+  Opciones de complemento, diálogos de alarma y otros se cerrarán
+  automáticamente. Esto requiere NVDA 2017.4.
+* Añadida una orden a SPL Controller para informar del nombre de la pista
+  actual en reproducción desde cualquier sitio (c).
+* Ahora puedes pulsar las teclas de cart (F1, por ejemplo) después de
+  introducir SPl Controller layer para reproducir carts asignados desde
+  cualquier lugar.
+* Debido a cambios introducidos en wxPython 4 GUI toolkit, el diálogo
+  Eliminar etiqueta de stream ahora es un cuadro combinado en lugar de un
+  campo de entrada numérica.
+
+## Versión 17.11.2
 
 Esta es la última versión que soporta Windows XP, Vista y 7 sin el Service
-Pack 1. Para utilizar este complemento en esas versiones de Windows, por
-favor utiliza la versión 17.10.
+Pack 1. La siguiente versión estable para estas versiones de Windows serán
+una versión 15.x LTS.
+
+* Si se utilizan versiones de Windows anteriores a Windows 7 Service Pack 1,
+  no puedes cambiarte a los canales de desarrollo
+
+## Versión 17.11.1/15.11-LTS
+
+* NVDA ya no reproducirá tonos de error o ya no parecerá no hacer nada al
+  utilizar Control+Alt+teclas de flecha izquierda o derecha para navegar por
+  columnas en Track Tool 5.20 con una pista cargada. Debido a este cambio,
+  al utilizar Studio 5.20, se requiere de la compilación 48 o posterior.
+
+## Versión 17.11/15.10-LTS
 
 * Soporte inicial para StationPlaylist Studio 5.30.
 * Si la alarma de micrófono y/o el temporizador de intervalos están

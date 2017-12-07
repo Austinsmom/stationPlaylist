@@ -100,7 +100,6 @@ UpdateInterval = integer(min=0, max=180, default=30)
 [Startup]
 AudioDuckingReminder = boolean(default=true)
 WelcomeDialog = boolean(default=true)
-OldVersionReminder = boolean(default=true)
 """), encoding="UTF-8", list_values=False)
 confspec.newlines = "\r\n"
 SPLConfig = None
@@ -494,11 +493,7 @@ class ConfigHub(ChainMap):
 		# #38 (17.11/15.10-LTS): can't wait two seconds for microphone alarm to stop.
 		# #40 (17.12): all taken care of by profile switched notification.
 		_restartMicTimer()
-		if splactions.actionsAvailable: splactions.SPLActionProfileSwitched.notify()
-		else:
-			# Use the module-level metadata and microphone status reminder methods if told to do so now.
-			if self["General"]["MetadataReminder"] in ("startup", "instant"):
-				_metadataAnnouncer(reminder=True)
+		splactions.SPLActionProfileSwitched.notify()
 
 	# Used from config dialog and other places.
 	# Show switch index is used when deleting profiles so it doesn't have to look up index for old profiles.
@@ -540,14 +535,13 @@ _configErrors ={
 }
 
 # To be run in app module constructor.
-# With the load function below, load the config upon request.
-# The below init function is really a vehicle that traverses through config profiles in a loop.
+# With the load function below, prepare config and other things upon request.
 # Prompt the config error dialog only once.
 _configLoadStatus = {} # Key = filename, value is pass or no pass.
 # Track comments map.
 trackComments = {}
 
-def initConfig():
+def initialize():
 	# Load the default config from a list of profiles.
 	# 8.0: All this work will be performed when ConfigHub loads.
 	global SPLConfig, _configLoadStatus, trackComments
@@ -827,8 +821,8 @@ def shouldSave(profile):
 	# The old loop will be kept in 7.x/LTS for compatibility and to reduce risks associated with accidental saving/discard.
 	return _SPLCache[tree] != profile
 
-# Save configuration database.
-def saveConfig():
+# Terminate the config and related subsystems.
+def terminate():
 	global SPLConfig, _SPLCache, SPLPrevProfile, _SPLTriggerEndTimer, _triggerProfileActive
 	# #30 (17.05): If we come here before a time-based profile expires, the trigger end timer will meet a painful death.
 	if _SPLTriggerEndTimer is not None and _SPLTriggerEndTimer.IsRunning():
@@ -1069,52 +1063,17 @@ Thank you.""")
 		SPLConfig["Startup"]["WelcomeDialog"] = self.showWelcomeDialog.Value
 		self.Destroy()
 
-# Old version reminder.
-# Only used when there is a LTS version.
-class OldVersionReminder(wx.Dialog):
-	#A dialog shown when using add-on 8.x under Studio 5.0x.
-	#
-
-	def __init__(self, parent):
-		# Translators: Title of a dialog displayed when the add-on starts reminding broadcasters about old Studio releases.
-		super(OldVersionReminder, self).__init__(parent, title=_("Old Windows version detected"))
-
-		mainSizer = wx.BoxSizer(wx.VERTICAL)
-
-		# Translators: A message displayed if using an old Studio or Windows version.
-		label = wx.StaticText(self, wx.ID_ANY, label=_("You are using an older version of Windows. From 2018 onwards, Studio add-on will not support versions earlier than Windows 7 Service Pack 1. Add-on 15.x LTS (long-term support) versions will support Windows versions such as Windows XP until mid-2018."))
-		mainSizer.Add(label,border=20,flag=wx.LEFT|wx.RIGHT|wx.TOP)
-
-		sizer = wx.BoxSizer(wx.HORIZONTAL)
-		# Translators: A checkbox to turn off old version reminder message.
-		self.oldVersionReminder=wx.CheckBox(self,wx.NewId(),label=_("Do not show this message again"))
-		self.oldVersionReminder.SetValue(not SPLConfig["Startup"]["OldVersionReminder"])
-		sizer.Add(self.oldVersionReminder, border=10,flag=wx.TOP)
-		mainSizer.Add(sizer, border=10, flag=wx.BOTTOM)
-
-		mainSizer.Add(self.CreateButtonSizer(wx.OK))
-		self.Bind(wx.EVT_BUTTON, self.onOk, id=wx.ID_OK)
-		mainSizer.Fit(self)
-		self.Sizer = mainSizer
-		self.oldVersionReminder.SetFocus()
-		self.Center(wx.BOTH | CENTER_ON_SCREEN)
-
-	def onOk(self, evt):
-		global SPLConfig
-		if self.oldVersionReminder.Value:
-			SPLConfig["Startup"]["OldVersionReminder"] = not self.oldVersionReminder.Value
-		self.Destroy()
-
 # And to open the above dialog and any other dialogs.
 # LTS18: return immediately after opening old ver dialog if minimal flag is set.
 def showStartupDialogs(oldVer=False, oldVerReturn=False):
 	# Old version reminder if this is such a case.
 	# 17.10: and also used to give people a chance to switch to LTS.
-	if oldVer and os.path.exists(os.path.join(globalVars.appArgs.configPath, "addons", "stationPlaylist", "ltsprep")):
-		if gui.messageBox("You are using an older version of Windows. From 2018 onwards, Studio add-on will not support versions earlier than Windows 7 Service Pack 1. Add-on 15.x LTS (long-term support) versions will support Windows versions such as Windows XP until mid-2018. Would you like to switch to long-term support release?", "Long-Term Support version", wx.YES | wx.NO | wx.CANCEL | wx.CENTER | wx.ICON_QUESTION) == wx.YES:
-			splupdate.SPLUpdateChannel = "lts"
-			os.remove(os.path.join(globalVars.appArgs.configPath, "addons", "stationPlaylist", "ltsprep"))
-	if oldVerReturn: return
+	# To be resurrected later.
+	#if oldVer and os.path.exists(os.path.join(globalVars.appArgs.configPath, "addons", "stationPlaylist", "ltsprep")):
+		#if gui.messageBox("You are using an older version of Windows. From 2018 onwards, Studio add-on will not support versions earlier than Windows 7 Service Pack 1. Add-on 15.x LTS (long-term support) versions will support Windows versions such as Windows XP until mid-2018. Would you like to switch to long-term support release?", "Long-Term Support version", wx.YES | wx.NO | wx.CANCEL | wx.CENTER | wx.ICON_QUESTION) == wx.YES:
+			#splupdate.SPLUpdateChannel = "lts"
+			#os.remove(os.path.join(globalVars.appArgs.configPath, "addons", "stationPlaylist", "ltsprep"))
+	#if oldVerReturn: return
 	if SPLConfig["Startup"]["WelcomeDialog"]:
 		gui.mainFrame.prePopup()
 		WelcomeDialog(gui.mainFrame).Show()

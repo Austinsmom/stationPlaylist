@@ -12,11 +12,19 @@ developers seeking to know how to build the add-on, see
 buildInstructions.txt located at the root of the add-on source code
 repository.
 
-IMPORTANT: This add-on requires NVDA 2017.1 or later and StationPlaylist
-Studio 5.10 or later. If using Windows 8 or later, for best experience,
-disable audio ducking mode. Also, add-on 8.0/16.10 requires Studio 5.10 and
-later, and for broadcasters using Studio 5.0x and/or Windows XP, Vista or 7
-without Service Pack 1, a long-term support version (15.x) is available.
+IMPORTANT NOTES:
+
+* This add-on requires NVDA 2017.1 or later and StationPlaylist Studio 5.10
+  or later.
+* If using Windows 8 or later, for best experience, disable audio ducking
+  mode.
+* add-on 8.0/16.10 requires Studio 5.10 or later. For broadcasters using
+  Studio 5.0x and/or Windows XP, Vista or 7 without Service Pack 1, a
+  long-term support version (15.x) is available. The last stable version to
+  support Windows releases prior to 7 Service Pack 1 is 17.11.2.
+* Starting from 2018, changelogs for old add-on releases will be found on
+  GitHub. This add-on readme will list changes from version 5.0 (2015
+  onwards).
 
 ## مفاتيح الاختصار
 
@@ -39,10 +47,10 @@ without Service Pack 1, a long-term support version (15.x) is available.
   السابق. 
 * Alt+NVDA+R من نافذة الاستوديو: لخطوات إعدادات الإعلان عن البحث في المكتبة
 * Control+Shift+X من نافذة الاستوديو: لخطوات إعدادات ميقات البرايل.
-* Control+Alt+right/left arrow (while focused on a track): Announce
-  next/previous track column.
-* Control+Alt+down/up arrow (while focused on a track): Move to next or
-  previous track and announce specific columns (unavailable in add-on 15.x).
+* Control+Alt+left/right arrow (while focused on a track): Announce
+  previous/next track column.
+* Control+Alt+up/down arrow (while focused on a track): Move to previous or
+  next track and announce specific columns (unavailable in add-on 15.x).
 * Control+NVDA+1 through 0 (6 for Studio 5.0x): Announce column content for
   a specified column.
 * Alt+NVDA+C while focused on a track: announces track comments if any.
@@ -176,11 +184,15 @@ PlayList Studio." اضغط أي من الأوامر التي سيلي ذكرها
 * اضغط Shift+R للإعلان عن مدى التقدم في البحث في المكتبة.
 * Press C to let NVDA announce name and duration of the currently playing
   track.
+* Press Shift+C to let NVDA announce name and duration of the upcoming track
+  if any.
 * اضغط E للحصول على عدد وأسماء التشفيرات الجاري مراقبتها.
 * Press I to obtain listener count.
 * Press Q to obtain various status information about Studio including
   whether a track is playing, microphone is on and others.
-* اضغط f1 لإظهار محاورة مساعدة بقائمة بالأوامر المتاحة.
+* Press cart keys (F1, Control+1, for example) to play assigned carts from
+  anywhere.
+* Press H to show a help dialog which lists available commands.
 
 ## تنبيهات المسار
 
@@ -256,11 +268,38 @@ broadcast profiles.
 استخدم لمسة ب3 أصابع للانتقال لنمط اللمس, ثم استخدم أوامر اللمس المسرودة
 أعلاه لأداء المهام.
 
-## Version 17.11/15.10-LTS
+## Version 17.12
 
-This is the last version to support Windows XP, Vista and 7 without Service
-Pack 1. To use this add-on in those Windows releases, please use version
-17.10.
+* Windows 7 Service Pack 1 or later is required.
+* Several add-on features were enhanced with extension points. This allows
+  microphone alarm and metadata streaming feature to respond to changes in
+  broadcast profiles. This requires NvDA 2017.4.
+* When Studio exits, various add-on dialogs such as add-on settings, alarm
+  dialogs and others will close automatically. This requires NVDA 2017.4.
+* Added a new command in SPL Controller layer to announce name of the
+  upcoming track if any (Shift+C).
+* You can now press cart keys (F1, for example) after entering SPl
+  Controller layer to play assigned carts from anywhere.
+* Due to changes introduced in wxPython 4 GUI toolkit, stream label eraser
+  dialog is now a combo box instead of a number entry field.
+
+## Version 17.11.2
+
+This is the last stable version to support Windows XP, Vista and 7 without
+Service Pack 1. The next stable version for these Windows releases will be a
+15.x LTS release.
+
+* If using Windows releases prior to Windows 7 Service Pack 1, you cannot
+  switch to development channels.
+
+## Version 17.11.1/15.11-LTS
+
+* NVDA will no longer play error tones or appear to do nothing when using
+  Control+Alt+left or right arrow keys to navigate columns in Track Tool
+  5.20 with a track loaded. Because of this change, when using Studio 5.20,
+  build 48 or later is required.
+
+## Version 17.11/15.10-LTS
 
 * Initial support for StationPlaylist Studio 5.30.
 * If microphone alarm and/or interval timer is turned on and if Studio exits
@@ -303,7 +342,7 @@ Pack 1. To use this add-on in those Windows releases, please use version
   last version to support Windows versions prior to windows 7 Service Pack
   1, Studio add-on will present a reminder message about this if running
   from old Windows releases. End of support for old Windows releases from
-  this add-on is scheduled for April 2018.
+  this add-on (via long-term support release) is scheduled for April 2018.
 * NVDA will no longer display startup dialogs and/or announce Studio version
   if started with minimal (nvda -rm) flag set. The sole exception is the old
   Windows release reminder dialog.

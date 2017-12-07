@@ -32,7 +32,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 		SPLConfigHelper = gui.guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
 		# #40 (17.12): respond to app terminate notification by closing this dialog.
 		# All top-level dialogs will be affected by this, and apart from this one, others will check for flags also.
-		if splactions.actionsAvailable: splactions.SPLActionAppTerminating.register(self.onAppTerminate)
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		# Broadcast profile controls were inspired by Config Profiles dialog in NVDA Core.
 		# 7.0: Have a copy of the sorted profiles so the actual combo box items can show profile flags.
@@ -327,13 +327,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 		# Change metadata streaming.
 		# 17.11: call the metadata connector directly, reducing code duplication from previous releases.
 		# 17.12: replaced by an action, with config UI active flag set.
-		import splmisc, splactions
-		if splactions.actionsAvailable:
-			splactions.SPLActionProfileSwitched.notify(configDialogActive=True)
-		else:
-			splmisc.metadataConnector(servers=splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"])
-			# Also restart microphone timer.
-			splmisc._restartMicTimer()
+		splactions.SPLActionProfileSwitched.notify(configDialogActive=True)
 
 	def onAppTerminate(self):
 		# Call cancel function when the app terminates so the dialog can be closed.
@@ -461,12 +455,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 			return
 		splconfig.SPLConfig.deleteProfile(name)
 		# 17.11: make sure to connect to the right set of metadata servers and enable/disable microphone alarm if appropriate.
-		import splmisc, splactions
-		if splactions.actionsAvailable:
-			splactions.SPLActionProfileSwitched.notify(configDialogActive=True)
-		else:
-			splmisc.metadataConnector(servers=splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"])
-			splmisc._restartMicTimer()
+		splactions.SPLActionProfileSwitched.notify(configDialogActive=True)
 		if name == self.switchProfile or name == self.activeProfile:
 			# 17.11/15.10-LTS: go through the below path if and only if instant switch profile is gone.
 			if name == self.switchProfile:
@@ -954,7 +943,7 @@ class AlarmsCenter(wx.Dialog):
 		self.level = level
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		alarmsCenterHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
-		if splactions.actionsAvailable: splactions.SPLActionAppTerminating.register(self.onAppTerminate)
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		if level in (0, 1):
 			timeVal = parent.endOfTrackTime if level == 0 else splconfig.SPLConfig["IntroOutroAlarms"]["EndOfTrackTime"]
@@ -1120,7 +1109,7 @@ class MetadataStreamingDialog(wx.Dialog):
 		self.func = func
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		metadataSizerHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
-		if splactions.actionsAvailable: splactions.SPLActionAppTerminating.register(self.onAppTerminate)
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		if func is None: labelText=_("Select the URL for metadata streaming upon request.")
 		else: labelText=_("Check to enable metadata streaming, uncheck to disable.")
@@ -1454,8 +1443,8 @@ class AdvancedOptionsDialog(wx.Dialog):
 			labelText = _("&Add-on update channel:")
 			if sys.getwindowsversion().build >= 7601: self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["Test Drive Fast", "Test Drive Slow", "stable"])
 			else:
-				self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["Test Drive Slow", "stable", "longterm"])
-				self._updateChannels = ("dev", "stable", "lts")
+				self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["stable", "longterm"])
+				self._updateChannels = ("stable", "lts")
 			self.channels.SetSelection(self._updateChannels.index(self.Parent.updateChannel))
 		# Translators: A checkbox to toggle if SPL Controller command can be used to invoke Assistant layer.
 		self.splConPassthroughCheckbox=advOptionsHelper.addItem(wx.CheckBox(self, label=_("Allow SPL C&ontroller command to invoke SPL Assistant layer")))
@@ -1488,14 +1477,6 @@ class AdvancedOptionsDialog(wx.Dialog):
 			channel = self._updateChannels[self.channels.GetSelection()]
 			# 17.09: present this dialog if and only if switching to fast ring from other rings.
 			if self.Parent.updateChannel != "try" and channel == "try":
-				if sys.getwindowsversion().build < 7601:
-					gui.messageBox(
-						# Translators: A message displayed when trying to switch to fast channel on old Windows releases.
-						_("It appears you are using Windows versions earlier than Windows 7 Service Pack 1, thus you cannot change to Test Drive Fast channel."),
-						# Translators: The title of the channel switch confirmation dialog.
-						_("Switching to unstable channel"),
-						wx.OK | wx.ICON_ERROR, self)
-					return
 				if gui.messageBox(
 					# Translators: The confirmation prompt displayed when changing to the fastest development channel (with risks involved).
 					_("You are about to switch to the Test Drive Fast (try) builds channel, the fastest and most unstable development channel. Please note that the selected channel may come with updates that might be unstable at times and should be used for testing and sending feedback to the add-on developer. If you prefer to use stable releases, please answer no and switch to a more stable update channel. Are you sure you wish to switch to Test Drive Fast channel?"),

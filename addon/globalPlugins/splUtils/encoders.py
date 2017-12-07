@@ -169,6 +169,9 @@ class EncoderConfigDialog(wx.Dialog):
 		# Use a weakref so the instance can die.
 		import weakref
 		EncoderConfigDialog._instance = weakref.ref(self)
+		# And to close this automatically when Studio dies.
+		from appModules.splstudio import splactions
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		self.obj = obj
 		self.curStreamLabel, title = obj.getStreamLabel(getTitle=True)
@@ -219,9 +222,9 @@ class EncoderConfigDialog(wx.Dialog):
 	def onCancel(self, evt):
 		self.Destroy()
 
+	def onAppTerminate(self):
+		self.onCancel(None)
 
-# Support for various encoders.
-# Each encoder must support connection routines.
 
 class Encoder(IAccessible):
 	"""Represents an encoder from within StationPlaylist Studio or Streamer.
@@ -255,7 +258,6 @@ class Encoder(IAccessible):
 		except KeyError:
 			return False
 
-	# Comment this out until background monitor setter is modified.
 	@property
 	def backgroundMonitor(self):
 		try:
@@ -375,11 +377,13 @@ class Encoder(IAccessible):
 		streamEraserTitle = _("Stream label and settings eraser")
 		# Translators: The text of the stream configuration eraser dialog.
 		streamEraserText = _("Enter the position of the encoder you wish to delete or will delete")
-		dlg = wx.NumberEntryDialog(gui.mainFrame,
-		streamEraserText, "", streamEraserTitle, self.IAccessibleChildID, 1, self.simpleParent.childCount)
+		# 17.12: wxPython 4 does not have number entry dialog, so replace it with a combo box dialog.
+		dlg = wx.SingleChoiceDialog(gui.mainFrame,
+		streamEraserText, streamEraserTitle, choices=[str(pos) for pos in xrange(1, self.simpleParent.childCount)])
+		dlg.SetSelection(self.IAccessibleChildID-1)
 		def callback(result):
 			if result == wx.ID_OK:
-				self.removeStreamConfig(str(dlg.GetValue()))
+				self.removeStreamConfig(dlg.GetStringSelection())
 		gui.runScriptModalDialog(dlg, callback)
 	# Translators: Input help mode message in SAM Encoder window.
 	script_streamLabelEraser.__doc__=_("Opens a dialog to erase stream labels and settings from an encoder that was deleted.")
@@ -431,8 +435,7 @@ class Encoder(IAccessible):
 		if streamLabels is None: loadStreamLabels()
 		# 6.2: Make sure background monitor threads are started if the flag is set.
 		if self.backgroundMonitor:
-			if self.encoderType == "SAM": threadPool = SAMMonitorThreads
-			elif self.encoderType == "SPL": threadPool = SPLMonitorThreads
+			threadPool = self.threadPool
 			if self.IAccessibleChildID in threadPool:
 				if not threadPool[self.IAccessibleChildID].is_alive():
 					del threadPool[self.IAccessibleChildID]

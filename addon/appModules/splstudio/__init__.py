@@ -63,11 +63,11 @@ def messageSound(wavFile, message):
 
 # A special version for microphone alarm (continuous or not).
 def _micAlarmAnnouncer():
-		if splconfig.SPLConfig["General"]["AlarmAnnounce"] in ("beep", "both"):
-			nvwave.playWaveFile(os.path.join(os.path.dirname(__file__), "SPL_MicAlarm.wav"))
-		if splconfig.SPLConfig["General"]["AlarmAnnounce"] in ("message", "both"):
-			# Translators: Presented when microphone has been active for a while.
-			ui.message(_("Microphone active"))
+	if splconfig.SPLConfig["General"]["AlarmAnnounce"] in ("beep", "both"):
+		nvwave.playWaveFile(os.path.join(os.path.dirname(__file__), "SPL_MicAlarm.wav"))
+	if splconfig.SPLConfig["General"]["AlarmAnnounce"] in ("message", "both"):
+		# Translators: Presented when microphone has been active for a while.
+		ui.message(_("Microphone active"))
 
 # Manage microphone alarm announcement.
 def micAlarmManager(micAlarmWav, micAlarmMessage):
@@ -86,21 +86,21 @@ def micAlarmManager(micAlarmWav, micAlarmMessage):
 # If debugging framework is on, print arg, command and other values.
 def studioAPI(arg, command, func=None, ret=False, offset=None):
 	if _SPLWin is None:
-		debugOutput("SPL: Studio handle not found")
+		debugOutput("Studio handle not found")
 		return
-	debugOutput("SPL: Studio API wParem is %s, lParem is %s"%(arg, command))
+	debugOutput("Studio API wParem is %s, lParem is %s"%(arg, command))
 	val = sendMessage(_SPLWin, 1024, arg, command)
-	debugOutput("SPL: Studio API result is %s"%val)
+	debugOutput("Studio API result is %s"%val)
 	if ret:
 		return val
 	if func:
 		func(val) if not offset else func(val, offset)
 
 # Check if Studio itself is running.
-# This is to make sure custom commands for SPL Assistant comamnds and other app module gestures display appropriate error messages.
+# This is to make sure custom commands for SPL Assistant commands and other app module gestures display appropriate error messages.
 def studioIsRunning():
 	if _SPLWin is None:
-		debugOutput("SPL: Studio handle not found")
+		debugOutput("Studio handle not found")
 		# Translators: A message informing users that Studio is not running so certain commands will not work.
 		ui.message(_("Studio main window not found"))
 		return False
@@ -109,6 +109,7 @@ def studioIsRunning():
 # Select a track upon request.
 def selectTrack(trackIndex):
 	studioAPI(-1, 121)
+	debugOutput("selecting track index %s"%trackIndex)
 	studioAPI(trackIndex, 121)
 
 # Category sounds dictionary (key = category, value = tone pitch).
@@ -283,7 +284,7 @@ class SPLTrackItem(IAccessible):
 			newTrack.setFocus(), newTrack.setFocus()
 			selectTrack(newTrack.IAccessibleChildID-1)
 
-			# Overlay class version of Columns Explorer.
+	# Overlay class version of Columns Explorer.
 
 	def script_columnExplorer(self, gesture):
 		# LTS: Just in case Control+NVDA+number row command is pressed...
@@ -297,7 +298,7 @@ class SPLTrackItem(IAccessible):
 			# Translators: Presented when a specific column header is not found.
 			ui.message(_("{headerText} not found").format(headerText = header))
 
-# Track comments.
+	# Track comments.
 
 	# Track comment announcer.
 	# Levels indicate what should be done.
@@ -606,40 +607,36 @@ class AppModule(appModuleHandler.AppModule):
 		except (IOError, AttributeError):
 			pass
 		# #40 (17.12): react to profile switches.
-		if splactions.actionsAvailable:
-			splactions.SPLActionProfileSwitched.register(self.actionProfileSwitched)
-		debugOutput("SPL: loading add-on settings")
-		splconfig.initConfig()
+		splactions.SPLActionProfileSwitched.register(self.actionProfileSwitched)
+		debugOutput("loading add-on settings")
+		splconfig.initialize()
 		# Announce status changes while using other programs.
 		# This requires NVDA core support and will be available in 6.0 and later (cannot be ported to earlier versions).
 		# For now, handle all background events, but in the end, make this configurable.
 		import eventHandler
-		if hasattr(eventHandler, "requestEvents"):
-			eventHandler.requestEvents(eventName="nameChange", processId=self.processID, windowClassName="TStatusBar")
-			eventHandler.requestEvents(eventName="nameChange", processId=self.processID, windowClassName="TStaticText")
-			# Also for requests window.
-			eventHandler.requestEvents(eventName="show", processId=self.processID, windowClassName="TRequests")
-			self.backgroundStatusMonitor = True
-		else:
-			self.backgroundStatusMonitor = False
+		eventHandler.requestEvents(eventName="nameChange", processId=self.processID, windowClassName="TStatusBar")
+		eventHandler.requestEvents(eventName="nameChange", processId=self.processID, windowClassName="TStaticText")
+		# Also for requests window.
+		eventHandler.requestEvents(eventName="show", processId=self.processID, windowClassName="TRequests")
+		self.backgroundStatusMonitor = True
+		debugOutput("preparing GUI subsystem")
 		self.prefsMenu = gui.mainFrame.sysTrayIcon.preferencesMenu
 		self.SPLSettings = self.prefsMenu.Append(wx.ID_ANY, _("SPL Studio Settings..."), _("SPL settings"))
 		gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, splconfui.onConfigDialog, self.SPLSettings)
 		# Let me know the Studio window handle.
 		# 6.1: Do not allow this thread to run forever (seen when evaluation times out and the app module starts).
 		self.noMoreHandle = threading.Event()
+		debugOutput("locating Studio window handle")
 		threading.Thread(target=self._locateSPLHwnd).start()
 		# Check for add-on update if told to do so.
 		# LTS: Only do this if channel hasn't changed.
 		if splconfig.SPLConfig["Update"]["AutoUpdateCheck"] or splupdate._updateNow:
-			debugOutput("SPL: checking for add-on updates from %s channel"%splupdate.SPLUpdateChannel)
+			debugOutput("checking for add-on updates from %s channel"%splupdate.SPLUpdateChannel)
 			# 7.0: Have a timer call the update function indirectly.
 			import queueHandler
 			queueHandler.queueFunction(queueHandler.eventQueue, splconfig.updateInit)
 		# Display startup dialogs if any.
 		# 17.10: not when minimal startup flag is set.
-		# 17.10 only: and force the old version dialog to appear if using Windows XP or Vista.
-		wx.CallAfter(splconfig.showStartupDialogs, oldVer=sys.getwindowsversion().build < 7601, oldVerReturn = True)
 		if not globalVars.appArgs.minimal: wx.CallAfter(splconfig.showStartupDialogs)
 
 	# Locate the handle for main window for caching purposes.
@@ -658,6 +655,7 @@ class AppModule(appModuleHandler.AppModule):
 		with threading.Lock() as hwndNotifier:
 			global _SPLWin
 			_SPLWin = hwnd
+			debugOutput("Studio handle is %s"%hwnd)
 		# Remind me to broadcast metadata information.
 		if splconfig.SPLConfig["General"]["MetadataReminder"] == "startup":
 			self._metadataAnnouncer(reminder=True)
@@ -915,10 +913,10 @@ class AppModule(appModuleHandler.AppModule):
 			nvwave.playWaveFile(os.path.join(os.path.dirname(__file__), "SPL_Requests.wav"))
 		nextHandler()
 
-	# Save configuration when terminating.
+	# Save configuration and perform other tasks when terminating.
 	def terminate(self):
 		super(AppModule, self).terminate()
-		debugOutput("SPL: terminating app module")
+		debugOutput("terminating app module")
 		# 6.3: Memory leak results if encoder flag sets and other encoder support maps aren't cleaned up.
 		# This also could have allowed a hacker to modify the flags set (highly unlikely) so NvDA could get confused next time Studio loads.
 		if "globalPlugins.splUtils.encoders" in sys.modules:
@@ -928,17 +926,16 @@ class AppModule(appModuleHandler.AppModule):
 		# #40 (17.12): replace this with a handler that responds to app module exit signal.
 		# Also allows profile switch handler to unregister itself as well.
 		# At the same time, close any opened SPL add-on dialogs.
-		if splactions.actionsAvailable:
-			splactions.SPLActionProfileSwitched.unregister(self.actionProfileSwitched)
-			splactions.SPLActionAppTerminating.notify()
-		debugOutput("SPL: closing microphone alarm/interval thread")
+		splactions.SPLActionProfileSwitched.unregister(self.actionProfileSwitched)
+		splactions.SPLActionAppTerminating.notify()
+		debugOutput("closing microphone alarm/interval thread")
 		global micAlarmT, micAlarmT2
 		if micAlarmT is not None: micAlarmT.cancel()
 		micAlarmT = None
 		if micAlarmT2 is not None: micAlarmT2.Stop()
 		micAlarmT2 = None
-		debugOutput("SPL: saving add-on settings")
-		splconfig.saveConfig()
+		debugOutput("saving add-on settings")
+		splconfig.terminate()
 		# reset column number for column navigation commands.
 		if self._focusedTrack: self._focusedTrack.__class__._curColumnNumber = None
 		# Delete focused track reference.
@@ -2220,6 +2217,7 @@ class AppModule(appModuleHandler.AppModule):
 		"kb:e":"metadataStreamingAnnouncer",
 		"kb:f1":"layerHelp",
 		"kb:shift+f1":"openOnlineDoc",
+		"kb:control+shift+u":"updateCheck",
 	}
 
 	__SPLAssistantWEGestures={

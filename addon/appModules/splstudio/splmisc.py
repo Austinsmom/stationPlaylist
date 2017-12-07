@@ -88,6 +88,7 @@ class SPLFindDialog(wx.Dialog):
 
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		findSizerHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		findHistory = obj.appModule.findText if obj.appModule.findText is not None else []
 		self.findEntry = findSizerHelper.addLabeledControl(findPrompt, wx.ComboBox, choices=findHistory)
@@ -133,6 +134,10 @@ class SPLFindDialog(wx.Dialog):
 		global _findDialogOpened
 		_findDialogOpened = False
 
+	def onAppTerminate(self):
+		# Call cancel function when the app terminates so the dialog can be closed.
+		self.onCancel(None)
+
 
 # Time range finder: a variation on track finder.
 # Similar to track finder, locate tracks with duration that falls between min and max.
@@ -162,6 +167,7 @@ class SPLTimeRangeDialog(wx.Dialog):
 		self.func = func
 
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
+		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
 		minSizer = wx.StaticBoxSizer(wx.StaticBox(self, wx.ID_ANY, _("Minimum duration")), wx.HORIZONTAL)
 		prompt = wx.StaticText(self, wx.ID_ANY, label=_("Minute"))
@@ -242,6 +248,10 @@ class SPLTimeRangeDialog(wx.Dialog):
 		global _findDialogOpened
 		_findDialogOpened = False
 
+	def onAppTerminate(self):
+		# Call cancel function when the app terminates so the dialog can be closed.
+		self.onCancel(None)
+
 
 # Cart Explorer helper.
 
@@ -278,7 +288,7 @@ _cartEditTimestamps = None
 # Carts dictionary is used if and only if refresh is on, as it'll modify live cats.
 def cartExplorerInit(StudioTitle, cartFiles=None, refresh=False, carts=None):
 	global _cartEditTimestamps
-	debugOutput("SPL: refreshing Cart Explorer" if refresh else "SPL: preparing cart Explorer")
+	debugOutput("refreshing Cart Explorer" if refresh else "SPL: preparing cart Explorer")
 	# Use cart files in SPL's data folder to build carts dictionary.
 	# use a combination of SPL user name and static cart location to locate cart bank files.
 	# Once the cart banks are located, use the routines in the populate method above to assign carts.
@@ -311,10 +321,10 @@ def cartExplorerInit(StudioTitle, cartFiles=None, refresh=False, carts=None):
 		if not refresh and not os.path.isfile(cartFile): # Cart explorer will fail if whitespaces are in the beginning or at the end of a user name.
 			faultyCarts = True
 			continue
-		debugOutput("SPL: examining carts from file %s"%cartFile)
+		debugOutput("examining carts from file %s"%cartFile)
 		cartTimestamp = os.path.getmtime(cartFile)
 		if refresh and _cartEditTimestamps[cartFiles.index(f)] == cartTimestamp:
-			debugOutput("SPL: no changes to cart bank, skipping")
+			debugOutput("no changes to cart bank, skipping")
 			continue
 		_cartEditTimestamps.append(cartTimestamp)
 		with open(cartFile) as cartInfo:
@@ -323,9 +333,9 @@ def cartExplorerInit(StudioTitle, cartFiles=None, refresh=False, carts=None):
 		# The below method will just check for string length, which is faster than looking for specific substring.
 		_populateCarts(carts, cl[1], mod if mod != "main" else "", standardEdition=carts["standardLicense"], refresh=refresh) # See the comment for _populate method above.
 		if not refresh:
-			debugOutput("SPL: carts processed so far: %s"%(len(carts)-1))
+			debugOutput("carts processed so far: %s"%(len(carts)-1))
 	carts["faultyCarts"] = faultyCarts
-	debugOutput("SPL: total carts processed: %s"%(len(carts)-2))
+	debugOutput("total carts processed: %s"%(len(carts)-2))
 	return carts
 
 # Refresh carts upon request.
@@ -442,8 +452,7 @@ def metadata_actionProfileSwitched(configDialogActive=False):
 	if splconfig.SPLConfig["General"]["MetadataReminder"] in ("startup", "instant"):
 		_metadataAnnouncer(reminder=True)
 
-if splactions.actionsAvailable:
-	splactions.SPLActionProfileSwitched.register(metadata_actionProfileSwitched)
+splactions.SPLActionProfileSwitched.register(metadata_actionProfileSwitched)
 
 # Microphone alarm checker.
 # Restart the microphone alarm timer if profile is switched and contains different mic alarm values.
