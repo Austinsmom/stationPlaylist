@@ -22,7 +22,11 @@ import globalVars
 import ui
 import gui
 import wx
-from . import splupdate
+# #50 (18.03): keep an eye on update check facility.
+try:
+	from . import splupdate
+except RuntimeError:
+	splupdate = None
 from .splmisc import SPLCountdownTimer, _metadataAnnouncer
 from . import splactions
 
@@ -509,7 +513,7 @@ class ConfigHub(ChainMap):
 			ui.message(_("Switching to {newProfileName}").format(newProfileName = self.activeProfile))
 			# Pause automatic update checking.
 			if self["Update"]["AutoUpdateCheck"]:
-				if splupdate._SPLUpdateT is not None and splupdate._SPLUpdateT.IsRunning(): splupdate._SPLUpdateT.Stop()
+				if splupdate: splupdate.updateCheckTimerEnd()
 		else:
 			self.switchHistory.pop()
 			# Translators: Presented when switching from instant switch profile to a previous profile.
@@ -875,15 +879,14 @@ def terminate():
 		SPLConfig.switchProfile(None, SPLConfig.prevProfile, appTerminating=True)
 		_triggerProfileActive = False
 	# 7.0: Turn off auto update check timer.
-	if splupdate._SPLUpdateT is not None and splupdate._SPLUpdateT.IsRunning(): splupdate._SPLUpdateT.Stop()
-	splupdate._SPLUpdateT = None
+	if splupdate: splupdate.updateCheckTimerEnd()
 	# Close profile triggers dictionary.
 	# 17.10: but if only the normal profile is in use, it won't do anything.
 	if not SPLConfig.normalProfileOnly: saveProfileTriggers()
 	# Dump track comments.
 	pickle.dump(trackComments, file(os.path.join(globalVars.appArgs.configPath, "spltrackcomments.pickle"), "wb"))
 	# Save update check state.
-	splupdate.terminate()
+	if splupdate: splupdate.terminate()
 	# Now save profiles.
 	# 8.0: Call the save method.
 	SPLConfig.save()
@@ -978,14 +981,14 @@ def triggerProfileSwitch():
 # Its only job is to call the update check function (splupdate) with the auto check enabled.
 # The update checker will not be engaged if secure mode flag is on, an instant switch profile is active, or it is not time to check for it yet (check will be done every 24 hours).
 def autoUpdateCheck():
-	if globalVars.appArgs.secure: return
+	if splupdate is None or globalVars.appArgs.secure: return
 	splupdate.updateChecker(auto=True, continuous=SPLConfig["Update"]["AutoUpdateCheck"], confUpdateInterval=SPLConfig["Update"]["UpdateInterval"])
 
 # The timer itself.
 # A bit simpler than NVDA Core's auto update checker.
 def updateInit():
 	# #48 (18.02/15.13-LTS): no, not when secure mode flag is on.
-	if globalVars.appArgs.secure: return
+	if splupdate is None or globalVars.appArgs.secure: return
 	# LTS: Launch updater if channel change is detected.
 	# Use a background thread for this as urllib blocks.
 	import threading
@@ -1186,3 +1189,59 @@ messagePool={
 			# Translators: A setting in library scan announcement options.
 			(_("Announce progress and item count of a library scan"),
 			_("Scan count"))}}
+
+# Handle several cases that disables update feature completely (or partially).
+SPLUpdateErrorNone = 0
+SPLUpdateErrorGeneric = 1
+SPLUpdateErrorSecureMode = 2
+SPLUpdateErrorTryBuild = 3
+SPLUpdateErrorSource = 4
+SPLUpdateErrorAppx = 5
+SPLUpdateErrorAddonsManagerUpdate = 6
+SPLUpdateErrorNoNetConnection = 7
+
+# These conditions are set when NVDA starts and cannot be changed at runtime, hence major errors.
+# This means no update channel selection, no retrys, etc.
+SPLUpdateMajorErrors = (SPLUpdateErrorSecureMode, SPLUpdateErrorTryBuild, SPLUpdateErrorSource, SPLUpdateErrorAppx, SPLUpdateErrorAddonsManagerUpdate)
+
+updateErrorMessages={
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorGeneric: _("An error occured while checking for add-on update. Please check NVDA log for details."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorSecureMode: _("NVDA is in secure mode. Please restart with secure mode disabled before checking for add-on updates."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorTryBuild: _("This is a try build of StationPlaylist Studio add-on. Please install the latest stable release to receive updates again."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorSource: _("Update checking not supported while running NVDA from source. Please run this add-on from an installed or a portable version of NVDA."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorAppx: _("This is a Windows Store version of NVDA. Add-on updating is supported on desktop version of NVDA."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorAddonsManagerUpdate: _("Cannot update add-on directly. Please check for add-on updates by going to add-ons manager."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorNoNetConnection: _("No internet connection. Please connect to the internet before checking for add-on update."),
+}
+
+# Check to really make sure add-on updating is supported.
+# Contrary to its name, 0 means yes, otherwise no.
+# For most cases, it'll return no errors except for scenarios outlined below.
+# The generic error (1) is meant to catch all errors not listed here, and for now, not used.
+def isAddonUpdatingSupported():
+	if globalVars.appArgs.secure:
+		return SPLUpdateErrorSecureMode
+	if "--spl-customtrybuild" in globalVars.appArgsExtra:
+		return SPLUpdateErrorTryBuild
+	import versionInfo
+	if not versionInfo.updateVersionType:
+		return SPLUpdateErrorSource
+	# NVDA 2018.1 and later.
+	import config
+	if hasattr(config, "isAppX") and config.isAppX:
+		return SPLUpdateErrorAppx
+	# Provided that NVDA issue 3208 is implemented.
+	if hasattr(addonHandler, "checkForAddonUpdate"):
+		return SPLUpdateErrorAddonsManagerUpdate
+	return SPLUpdateErrorNone
+
+def canUpdate():
+	return isAddonUpdatingSupported() == SPLUpdateErrorNone
+
