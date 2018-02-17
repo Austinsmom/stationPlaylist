@@ -1,21 +1,28 @@
 # SPL Studio Miscellaneous User Interfaces and internal services
 # An app module and global plugin package for NVDA
-# Copyright 2015-2017 Joseph Lee and others, released under GPL.
+# Copyright 2015-2018 Joseph Lee and others, released under GPL.
 # Miscellaneous functions and user interfaces
 # Split from config module in 2015.
 
 # JL's disclaimer: Apart from CSV module, others in this folder are my modules. CSV is part of Python distribution (Copyright Python Software Foundation).
 
+import sys
+py3 = sys.version.startswith("3")
 import ctypes
 import weakref
 import os
+import threading
 from .csv import reader # For cart explorer.
 import gui
 import wx
 import ui
 from winUser import user32, sendMessage
+from . import splbase
 from .spldebugging import debugOutput
 from . import splactions
+
+# Python 3 preparation (a compatibility layer until Six module is included).
+rangeGen = range if py3 else xrange
 
 # Until wx.CENTER_ON_SCREEN returns...
 CENTER_ON_SCREEN = wx.CENTER_ON_SCREEN if hasattr(wx, "CENTER_ON_SCREEN") else 2
@@ -154,7 +161,7 @@ class SPLTimeRangeDialog(wx.Dialog):
 			return super(cls, cls).__new__(cls, parent, *args, **kwargs)
 		return inst
 
-	def __init__(self, parent, obj, func):
+	def __init__(self, parent, obj):
 		inst = SPLTimeRangeDialog._instance() if SPLTimeRangeDialog._instance else None
 		if inst:
 			return
@@ -164,7 +171,6 @@ class SPLTimeRangeDialog(wx.Dialog):
 		# Translators: The title of a dialog to find tracks with duration within a specified range.
 		super(SPLTimeRangeDialog, self).__init__(parent, wx.ID_ANY, _("Time range finder"))
 		self.obj = obj
-		self.func = func
 
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
@@ -225,16 +231,16 @@ class SPLTimeRangeDialog(wx.Dialog):
 			obj = self.obj.next
 			# Manually locate tracks here.
 			while obj is not None:
-				filename = self.func(obj.IAccessibleChildID-1, 211, ret=True)
-				if minDuration <= self.func(filename, 30, ret=True) <= maxDuration:
+				filename = splbase.studioAPI(obj.IAccessibleChildID-1, 211)
+				if minDuration <= splbase.studioAPI(filename, 30) <= maxDuration:
 					break
 				obj = obj.next
 			if obj is not None:
 				# This time, set focus once, as doing it twice causes focus problems only if using Studio 5.10 or later.
 				obj.setFocus()
 				# 16.11: Select the desired track manually.
-				self.func(-1, 121)
-				self.func(obj.IAccessibleChildID-1, 121)
+				# #45 (18.02): call select track function in splbase module.
+				splbase.selectTrack(obj.IAccessibleChildID-1)
 			else:
 				wx.CallAfter(gui.messageBox,
 				# Translators: Standard dialog message when an item one wishes to search is not found (copy this from main nvda.po).
@@ -379,6 +385,11 @@ class SPLCountdownTimer(object):
 
 # Metadata and encoders management, including connection, announcement and so on.
 
+# Gather streaming flags into a list.
+def metadataList(handle=None):
+	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
+	return [sendMessage(handle, 1024, pos, 36) for pos in rangeGen(5)]
+
 # Metadata server connector, to be utilized from many modules.
 # Servers refer to a list of connection flags to pass to Studio API, and if not present, will be pulled from add-on settings.
 def metadataConnector(handle=None, servers=None):
@@ -387,19 +398,20 @@ def metadataConnector(handle=None, servers=None):
 	if servers is None:
 		from . import splconfig
 		servers = splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"]
-	for url in xrange(5):
+	for url in rangeGen(5):
 		dataLo = 0x00010000 if servers[url] else 0xffff0000
 		sendMessage(handle, 1024, dataLo | url, 36)
 
 # Metadata status formatter.
 def metadataStatus(handle=None):
 	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
-	# Gather stream flags.
+	streams = metadataList(handle=handle)
 	# DSP is treated specially.
-	dsp = sendMessage(handle, 1024, 0, 36)
+	dsp = streams[0]
 	# For others, a simple list.append will do.
 	# 17.04: Use a conditional list comprehension.
-	streamCount = [str(pos) for pos in xrange(1, 5) if sendMessage(handle, 1024, pos, 36)]
+	# 18.02: comprehend based on streams list from above.
+	streamCount = [str(pos) for pos in rangeGen(1, 5) if streams[pos]]
 	# Announce streaming status when told to do so.
 	status = None
 	if not len(streamCount):
@@ -419,12 +431,34 @@ def metadataStatus(handle=None):
 		else: status = _("Metadata streaming configured for URL's {URL}").format(URL = ", ".join(streamCount))
 	return status
 
+# Internal metadata status announcer.
+# The idea is to pause for a while and announce the status message and playing the accompanying wave file.
+# This is necessary in order to allow extension points to work correctly and to not hold up other registered action handlers.
+def _metadataAnnouncerInternal(status):
+	import nvwave, queueHandler, speech
+	speech.cancelSpeech()
+	queueHandler.queueFunction(queueHandler.eventQueue, ui.message, status)
+	nvwave.playWaveFile(os.path.join(os.path.dirname(__file__), "SPL_Metadata.wav"))
+	# #51 (18.03/15.14-LTS): close link to metadata announcer thread when finished.
+	global _earlyMetadataAnnouncer
+	_earlyMetadataAnnouncer = None
+
+# Handle a case where instant profile ssitch occurs twice within the switch time-out.
+_earlyMetadataAnnouncer = None
+
+def _earlyMetadataAnnouncerInternal(status):
+	global _earlyMetadataAnnouncer
+	if _earlyMetadataAnnouncer is not None:
+		_earlyMetadataAnnouncer.cancel()
+		_earlyMetadataAnnouncer = None
+	_earlyMetadataAnnouncer = threading.Timer(2, _metadataAnnouncerInternal, args=[status])
+	_earlyMetadataAnnouncer.start()
+
 # Module-level version of metadata announcer
 # Moved to this module in 2016 to allow this function to work while Studio window isn't focused.
 # Split into several functions in 2017.
 # To preserve backward compatibility, let the announcer call individual functions above for a while.
 def _metadataAnnouncer(reminder=False, handle=None):
-	import time, nvwave, queueHandler, speech
 	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
 	# If told to remind and connect, metadata streaming will be enabled at this time.
 	# 6.0: Call Studio API twice - once to set, once more to obtain the needed information.
@@ -433,33 +467,31 @@ def _metadataAnnouncer(reminder=False, handle=None):
 	if reminder: metadataConnector(handle=handle)
 	# Gather stream flags.
 	status = metadataStatus(handle=handle)
-	if reminder:
-		time.sleep(2)
-		speech.cancelSpeech()
-		queueHandler.queueFunction(queueHandler.eventQueue, ui.message, status)
-		nvwave.playWaveFile(os.path.join(os.path.dirname(__file__), "SPL_Metadata.wav"))
+	# #40 (18.02): call the internal announcer in order to not hold up action handler queue.
+	# #51 (18.03/15.14-LTS): if this is called within two seconds (status time-out), stuats will be announced multiple times.
+	if reminder: _earlyMetadataAnnouncerInternal(status)
 	else: ui.message(status)
 
 # Connect and/or announce metadata status when broadcast profile switching occurs.
 # The config dialog active flag is only invoked when being notified while add-on settings dialog is focused.
 def metadata_actionProfileSwitched(configDialogActive=False):
-	import splconfig
+	from . import splconfig
 	# Only connect if add-on settings is active in order to avoid wasting thread running time.
 	if configDialogActive:
 		metadataConnector(servers=splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"])
 		return
 	# Ordinarily, errors would have been dealt with, but Action.notify will catch errors and log messages.
-	if splconfig.SPLConfig["General"]["MetadataReminder"] in ("startup", "instant"):
-		_metadataAnnouncer(reminder=True)
+	# #40 (18.02): the only possible error is if Studio handle is invalid, which won't be the case, otherwise no point handling this action.
+	# #49 (18.03): no, don't announce this if the app module is told to announce metadata status at startup only.
+	if splconfig.SPLConfig["General"]["MetadataReminder"] == "instant":
+		# If told to remind and connect, metadata streaming will be enabled at this time.
+		# 6.0: Call Studio API twice - once to set, once more to obtain the needed information.
+		# 6.2/7.0: When Studio API is called, add the value into the stream count list also.
+		# 17.11: call the connector.
+		# 18.02: transfered to the action handler and greatly simplified.
+		handle = user32.FindWindowA("SPLStudio", None)
+		metadataConnector(handle=handle)
+		# #51 (18.03/15.14-LTS): wx.CallLater isn't enough - there must be ability to cancel it.# #47 (18.02/15.13-LTS): call the internal announcer via wx.CallLater in order to not hold up action handler queue.
+		_earlyMetadataAnnouncerInternal(metadataStatus(handle=handle))
 
 splactions.SPLActionProfileSwitched.register(metadata_actionProfileSwitched)
-
-# Microphone alarm checker.
-# Restart the microphone alarm timer if profile is switched and contains different mic alarm values.
-def _restartMicTimer():
-	# The only use of window handle is checking if Studio is running, especially if this function is invoked while demo reminder screen is active.
-	if not user32.FindWindowA("SPLStudio", None): return
-	from winUser import OBJID_CLIENT
-	from NVDAObjects.IAccessible import getNVDAObjectFromEvent
-	studioWindow = getNVDAObjectFromEvent(user32.FindWindowA("TStudioForm", None), OBJID_CLIENT, 0)
-	studioWindow.appModule.actionProfileSwitched()

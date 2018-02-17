@@ -1,6 +1,6 @@
 # SPL Studio Configuration Manager
 # An app module and global plugin package for NVDA
-# Copyright 2015-2017 Joseph Lee and others, released under GPL.
+# Copyright 2015-2018 Joseph Lee and others, released under GPL.
 # Provides the configuration management package for SPL Studio app module.
 # For miscellaneous dialogs and tool, see SPLMisc module.
 # For UI surrounding this module, see splconfui module.
@@ -10,23 +10,24 @@ py3 = sys.version.startswith("3")
 import os
 if py3:
 	from io import StringIO
+	import pickle
 else:
 	from cStringIO import StringIO
+	import cPickle as pickle
 from configobj import ConfigObj
 from validate import Validator
 import time
 import datetime
-if py3:
-	import pickle
-else:
-	import cPickle as pickle
 import globalVars
 import ui
 import gui
 import wx
 from . import splupdate
-from .splmisc import SPLCountdownTimer, _metadataAnnouncer, _restartMicTimer
+from .splmisc import SPLCountdownTimer, _metadataAnnouncer
 from . import splactions
+
+# Python 3 preparation (a compatibility layer until Six module is included).
+rangeGen = range if py3 else xrange
 
 # Until NVDA Core uses Python 3 (preferably 3.3 or later), use a backported version of chain map class.
 # Backported by Jonathan Eunice.
@@ -171,6 +172,9 @@ class ConfigHub(ChainMap):
 		# Active profile name is retrieved via the below property function.
 		self.instantSwitch = self.profiles[0]["InstantProfile"] if ("InstantProfile" in self.profiles[0] and not self.normalProfileOnly) else None
 		self.timedSwitch = None
+		self.prevProfile = None
+		# A bit vector used to store profile switching flags.
+		self._switchProfileFlags = 0
 		# Switch history is a stack of previously activated profile(s), replacing prev profile flag from 7.x days.
 		# Initially normal profile will sit in here.
 		self.switchHistory = [self.activeProfile]
@@ -199,6 +203,21 @@ class ConfigHub(ChainMap):
 	@property
 	def configRestricted(self):
 		return self.volatileConfig or self.normalProfileOnly or self.configInMemory
+
+	# Profile switching flags.
+	_profileSwitchFlags = {"instant": 0x1, "timed": 0x2}
+
+	@property
+	def switchProfileFlags(self):
+		return self._switchProfileFlags
+
+	@property
+	def instantSwitchProfileActive(self):
+		return bool(self._switchProfileFlags & self._profileSwitchFlags["instant"])
+
+	@property
+	def timedSwitchProfileActive(self):
+		return bool(self._switchProfileFlags & self._profileSwitchFlags["timed"])
 
 	# Unlock (load) profiles from files.
 	# LTS: Allow new profile settings to be overridden by a parent profile.
@@ -466,9 +485,12 @@ class ConfigHub(ChainMap):
 	# This involves promoting and demoting normal profile.
 	# 17.05: The appTerminating flag is used to suppress profile switching messages.
 	# 17.10: this will never be invoked if only normal profile is in use or if config was loaded from memory alone.
-	def switchProfile(self, prevProfile, newProfile, appTerminating=False):
+	def switchProfile(self, prevProfile, newProfile, appTerminating=False, switchFlags=None):
 		if self.normalProfileOnly or self.configInMemory:
 			raise RuntimeError("Only normal profile is in use or config was loaded from memory, cannot switch profiles")
+		# There are two switch flags in use, so make sure to check the highest bit.
+		if switchFlags is not None and not 0 <= switchFlags < 0x4:
+			raise RuntimeError("Profile switch flag out of range")
 		if not appTerminating:
 			from .splconfui import _configDialogOpened
 			if _configDialogOpened:
@@ -477,6 +499,10 @@ class ConfigHub(ChainMap):
 				return
 		self.swapProfiles(prevProfile, newProfile)
 		if appTerminating: return
+		# Set the prev flag manually.
+		self.prevProfile = prevProfile
+		# Manipulated only by profile switch start/end functions.
+		self._switchProfileFlags = switchFlags
 		if prevProfile is not None:
 			self.switchHistory.append(newProfile)
 			# Translators: Presented when switch to instant switch profile was successful.
@@ -492,8 +518,28 @@ class ConfigHub(ChainMap):
 			if self["Update"]["AutoUpdateCheck"]: updateInit()
 		# #38 (17.11/15.10-LTS): can't wait two seconds for microphone alarm to stop.
 		# #40 (17.12): all taken care of by profile switched notification.
-		_restartMicTimer()
 		splactions.SPLActionProfileSwitched.notify()
+
+	# Switch start/end functions.
+	# To be called from the module when starting or ending a profile switch.
+	# The only difference is the switch type, which will then set appropriate flag to be passed to switchProfile method above, with xor used to set the flags.
+	def switchProfileStart(self, prevProfile, newProfile, switchType):
+		if switchType not in ("instant", "timed"):
+			raise RuntimeError("Incorrect profile switch type specified")
+		if switchType == "instant" and self.instantSwitchProfileActive:
+			raise RuntimeError("Instant switch flag is already on")
+		elif switchType == "timed" and self.timedSwitchProfileActive:
+			raise RuntimeError("Timed switch flag is already on")
+		self.switchProfile(prevProfile, newProfile, switchFlags=self._switchProfileFlags ^ self._profileSwitchFlags[switchType])
+
+	def switchProfileEnd(self, prevProfile, newProfile, switchType):
+		if switchType not in ("instant", "timed"):
+			raise RuntimeError("Incorrect profile switch type specified")
+		if switchType == "instant" and not self.instantSwitchProfileActive:
+			raise RuntimeError("Instant switch flag is already off")
+		elif switchType == "timed" and not self.timedSwitchProfileActive:
+			raise RuntimeError("Timed switch flag is already off")
+		self.switchProfile(prevProfile, newProfile, switchFlags=self._switchProfileFlags ^ self._profileSwitchFlags[switchType])
 
 	# Used from config dialog and other places.
 	# Show switch index is used when deleting profiles so it doesn't have to look up index for old profiles.
@@ -580,8 +626,6 @@ def initialize():
 	# Fire up profile triggers.
 	# 17.10: except when normal profile only flag is specified.
 	if not SPLConfig.normalProfileOnly: initProfileTriggers()
-	# Let the update check begin.
-	splupdate.initialize()
 	# 7.1: Make sure encoder settings map isn't corrupted.
 	try:
 		streamLabels = ConfigObj(os.path.join(globalVars.appArgs.configPath, "splStreamLabels.ini"))
@@ -686,7 +730,7 @@ def setNextTimedProfile(profile, bits, switchTime, date=None, duration=0):
 				delta = currentDay-nextDay
 			else:
 				triggerBit = -1
-				for bit in range(currentDay-1, -1, -1) if py3 else xrange(currentDay-1, -1, -1):
+				for bit in rangeGen(currentDay-1, -1, -1):
 					if 2 ** bit & days:
 						triggerBit = bit
 						break
@@ -823,12 +867,12 @@ def shouldSave(profile):
 
 # Terminate the config and related subsystems.
 def terminate():
-	global SPLConfig, _SPLCache, SPLPrevProfile, _SPLTriggerEndTimer, _triggerProfileActive
+	global SPLConfig, _SPLCache, _SPLTriggerEndTimer, _triggerProfileActive
 	# #30 (17.05): If we come here before a time-based profile expires, the trigger end timer will meet a painful death.
 	if _SPLTriggerEndTimer is not None and _SPLTriggerEndTimer.IsRunning():
 		_SPLTriggerEndTimer.Stop()
 		_SPLTriggerEndTimer = None
-		SPLConfig.switchProfile(None, SPLPrevProfile, appTerminating=True)
+		SPLConfig.switchProfile(None, SPLConfig.prevProfile, appTerminating=True)
 		_triggerProfileActive = False
 	# 7.0: Turn off auto update check timer.
 	if splupdate._SPLUpdateT is not None and splupdate._SPLUpdateT.IsRunning(): splupdate._SPLUpdateT.Stop()
@@ -846,24 +890,21 @@ def terminate():
 	SPLConfig = None
 	_SPLCache.clear()
 	_SPLCache = None
-	SPLPrevProfile = None
 
 # Switch between profiles.
-SPLPrevProfile = None
-
 # A general-purpose profile switcher.
 # Allows the add-on to switch between profiles as a result of manual intervention or through profile trigger timer.
 # Profiles refer to profile names.
 # Instant profile switching is just a special case of this function.
+# 18.04: kept for compatibility for a while.
 def switchProfile(prevProfile, newProfile):
-	global SPLPrevProfile, _SPLCache
+	global _SPLCache
 	from .splconfui import _configDialogOpened
 	if _configDialogOpened:
 		# Translators: Presented when trying to switch to an instant switch profile when add-on settings dialog is active.
 		ui.message(_("Add-on settings dialog is open, cannot switch profiles"))
 		return
 	SPLConfig.switchProfile(prevProfile, newProfile)
-	SPLPrevProfile = prevProfile
 	# 8.0: Cache other profiles this time.
 	if newProfile != defaultProfileName and newProfile not in _SPLCache:
 		_cacheConfig(SPLConfig.profileByName(newProfile))
@@ -880,7 +921,7 @@ def instantProfileSwitch():
 		# Translators: Presented when trying to switch to an instant switch profile when the instant switch profile is not defined.
 		ui.message(_("No instant switch profile is defined"))
 	else:
-		if SPLPrevProfile is None:
+		if SPLConfig.prevProfile is None:
 			if SPLConfig.activeProfile == SPLSwitchProfile:
 				# Translators: Presented when trying to switch to an instant switch profile when one is already using the instant switch profile.
 				ui.message(_("You are already in the instant switch profile"))
@@ -891,9 +932,11 @@ def instantProfileSwitch():
 			# Pass in the prev profile, which will be None for instant profile switch.
 			# 7.0: Now activate "activeProfile" argument which controls the behavior of the function below.
 			# 8.0: Work directly with profile names.
-			switchProfile(SPLConfig.activeProfile, SPLSwitchProfile)
+			# 18.04: call switch profile start method directly.
+			# To the outside, a profile switch took place.
+			SPLConfig.switchProfileStart(SPLConfig.activeProfile, SPLSwitchProfile, "instant")
 		else:
-			switchProfile(None, SPLPrevProfile)
+			SPLConfig.switchProfileEnd(None, SPLConfig.prevProfile, "instant")
 
 # The triggers version of the above function.
 _SPLTriggerEndTimer = None
@@ -905,12 +948,12 @@ def triggerProfileSwitch():
 	SPLTriggerProfile = SPLConfig.timedSwitch
 	if SPLTriggerProfile is None and _triggerProfileActive:
 		raise RuntimeError("Trigger profile flag cannot be active when the trigger profile itself isn't defined")
-	if SPLPrevProfile is None:
+	if SPLConfig.prevProfile is None:
 		if SPLConfig.activeProfile == SPLTriggerProfile:
 			# Translators: Presented when trying to switch to an instant switch profile when one is already using the instant switch profile.
 			ui.message(_("A profile trigger is already active"))
 			return
-		switchProfile(SPLConfig.activeProfile, SPLTriggerProfile)
+		SPLConfig.switchProfileStart(SPLConfig.activeProfile, SPLTriggerProfile, "timed")
 		# Set the global trigger flag to inform various subsystems such as add-on settings dialog.
 		_triggerProfileActive = True
 		# Set the next trigger date and time.
@@ -922,7 +965,7 @@ def triggerProfileSwitch():
 			_SPLTriggerEndTimer = wx.PyTimer(triggerProfileSwitch)
 			_SPLTriggerEndTimer.Start(triggerSettings[6] * 60 * 1000, True)
 	else:
-		switchProfile(None, SPLPrevProfile)
+		SPLConfig.switchProfileEnd(None, SPLConfig.prevProfile, "timed")
 		_triggerProfileActive = False
 		# Stop the ending timer.
 		if _SPLTriggerEndTimer is not None and _SPLTriggerEndTimer.IsRunning():
@@ -933,13 +976,16 @@ def triggerProfileSwitch():
 
 # The function below is called as part of the update check timer.
 # Its only job is to call the update check function (splupdate) with the auto check enabled.
-# The update checker will not be engaged if an instant switch profile is active or it is not time to check for it yet (check will be done every 24 hours).
+# The update checker will not be engaged if secure mode flag is on, an instant switch profile is active, or it is not time to check for it yet (check will be done every 24 hours).
 def autoUpdateCheck():
+	if globalVars.appArgs.secure: return
 	splupdate.updateChecker(auto=True, continuous=SPLConfig["Update"]["AutoUpdateCheck"], confUpdateInterval=SPLConfig["Update"]["UpdateInterval"])
 
 # The timer itself.
 # A bit simpler than NVDA Core's auto update checker.
 def updateInit():
+	# #48 (18.02/15.13-LTS): no, not when secure mode flag is on.
+	if globalVars.appArgs.secure: return
 	# LTS: Launch updater if channel change is detected.
 	# Use a background thread for this as urllib blocks.
 	import threading
@@ -1112,17 +1158,17 @@ messagePool={
 		"outro":
 			# Translators: A setting in braille timer options.
 			(_("Braille track endings"),
-						# Translators: A setting in braille timer options.
+			# Translators: A setting in braille timer options.
 			_("Outro")),
 		"intro":
 			# Translators: A setting in braille timer options.
 			(_("Braille intro endings"),
-						# Translators: A setting in braille timer options.
+			# Translators: A setting in braille timer options.
 			_("Intro")),
 		"both":
 			# Translators: A setting in braille timer options.
 			(_("Braille intro and track endings"),
-						# Translators: A setting in braille timer options.
+			# Translators: A setting in braille timer options.
 			_("Both"))},
 	"LibraryScanAnnounce":
 		{"off":

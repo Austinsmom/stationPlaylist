@@ -1,6 +1,6 @@
 # SPL Studio Configuration user interfaces
 # An app module and global plugin package for NVDA
-# Copyright 2016-2017 Joseph Lee and others, released under GPL.
+# Copyright 2016-2018 Joseph Lee and others, released under GPL.
 # Split from SPL config module in 2016.
 # Provides the configuration management UI package for SPL Studio app module.
 # For code which provides foundation for code in this module, see splconfig module.
@@ -17,6 +17,9 @@ import tones
 from . import splupdate
 from . import splconfig
 from . import splactions
+
+# Python 3 preparation (a compatibility layer until Six module is included).
+rangeGen = range if py3 else xrange
 
 # Until wx.CENTER_ON_SCREEN returns...
 CENTER_ON_SCREEN = wx.CENTER_ON_SCREEN if hasattr(wx, "CENTER_ON_SCREEN") else 2
@@ -269,7 +272,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 		# Make sure to nullify prev profile if instant switch profile is gone.
 		# 7.0: Don't do the following in the midst of a broadcast.
 		if self.switchProfile is None and not splconfig._triggerProfileActive:
-			splconfig.SPLPrevProfile = None
+			splconfig.SPLConfig.prevProfile = None
 		_configDialogOpened = False
 		# 7.0: Perform extra action such as restarting auto update timer.
 		self.onCloseExtraAction()
@@ -335,7 +338,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 
 	# Include profile flags such as instant profile string for display purposes.
 	def displayProfiles(self, profiles):
-		for index in xrange(len(profiles)):
+		for index in rangeGen(len(profiles)):
 			profiles[index] = splconfig.getProfileFlags(profiles[index])
 		return profiles
 
@@ -426,7 +429,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 		# 6.4: This was seen after deleting a profile one position before the previously active profile.
 		# 7.0: One should never delete the currently active time-based profile.
 		# 7.1: Find a way to safely proceed via two-step verification if trying to delete currently active time-based profile.
-		if (splconfig._SPLTriggerEndTimer is not None and splconfig._SPLTriggerEndTimer.IsRunning()) or splconfig._triggerProfileActive or splconfig.SPLPrevProfile is not None:
+		if (splconfig._SPLTriggerEndTimer is not None and splconfig._SPLTriggerEndTimer.IsRunning()) or splconfig._triggerProfileActive or splconfig.SPLConfig.prevProfile is not None:
 			# Translators: Message reported when attempting to delete a profile while a profile is triggered.
 			gui.messageBox(_("An instant switch profile might be active or you are in the midst of a broadcast. If so, please press SPL Assistant, F12 to switch back to a previously active profile before opening add-on settings to delete a profile."),
 				# Translators: Title of a dialog shown when profile cannot be deleted.
@@ -460,7 +463,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 			# 17.11/15.10-LTS: go through the below path if and only if instant switch profile is gone.
 			if name == self.switchProfile:
 				self.switchProfile = None
-				splconfig.SPLPrevProfile = None
+				splconfig.SPLConfig.prevProfile = None
 			self.switchProfileDeleted = True
 		self.profiles.Delete(index)
 		del self.profileNames[profilePos]
@@ -665,7 +668,7 @@ class TriggersDialog(wx.Dialog):
 		daysSizer = wx.StaticBoxSizer(wx.StaticBox(self, wx.ID_ANY, _("Day")), wx.HORIZONTAL)
 		self.triggerDays = []
 		import calendar
-		for day in xrange(len(calendar.day_name)):
+		for day in rangeGen(len(calendar.day_name)):
 			triggerDay=wx.CheckBox(self, wx.NewId(),label=calendar.day_name[day])
 			triggerDay.SetValue((64 >> day & self.Parent._profileTriggersConfig[profile][0]) if profile in self.Parent._profileTriggersConfig else 0)
 			if not self.timeSwitchCheckbox.IsChecked(): triggerDay.Disable()
@@ -990,8 +993,12 @@ class AlarmsCenter(wx.Dialog):
 				splconfig.SPLConfig["MicrophoneAlarm"]["MicAlarm"] = self.micAlarmEntry.GetValue()
 				splconfig.SPLConfig["MicrophoneAlarm"]["MicAlarmInterval"] = self.micIntervalEntry.GetValue()
 				# #42 (18.01/15.12-LTS): don't forget to restart microphone alarm timer.
-				import splmisc
-				splmisc._restartMicTimer()
+				# 18.02: do it here at once.
+				# It is fine to import something from winUser again as this will be traversed if and only if microphone alarm dialog is open with Studio active.
+				from winUser import OBJID_CLIENT
+				from NVDAObjects.IAccessible import getNVDAObjectFromEvent
+				studioWindow = getNVDAObjectFromEvent(user32.FindWindowA("TStudioForm", None), OBJID_CLIENT, 0)
+				studioWindow.appModule.actionProfileSwitched()
 		elif self.level == 0:
 			parent = self.Parent
 			parent.endOfTrackTime = self.outroAlarmEntry.GetValue()
@@ -1100,7 +1107,7 @@ class MetadataStreamingDialog(wx.Dialog):
 			return super(cls, cls).__new__(cls, parent, *args, **kwargs)
 		return inst
 
-	def __init__(self, parent, func=None):
+	def __init__(self, parent, configDialogActive=True):
 		inst = MetadataStreamingDialog._instance() if MetadataStreamingDialog._instance else None
 		if inst:
 			return
@@ -1109,12 +1116,13 @@ class MetadataStreamingDialog(wx.Dialog):
 
 		# Translators: Title of a dialog to configure metadata streaming status for DSP encoder and four additional URL's.
 		super(MetadataStreamingDialog, self).__init__(parent, title=_("Metadata streaming options"))
-		self.func = func
+		# #44 (18.02): Config dialog flag controls how stream value will be gathered and set (if true, this is part of add-on settings, otherwise use Studio API).
+		self.configDialogActive = configDialogActive
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		metadataSizerHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 		splactions.SPLActionAppTerminating.register(self.onAppTerminate)
 
-		if func is None: labelText=_("Select the URL for metadata streaming upon request.")
+		if configDialogActive: labelText=_("Select the URL for metadata streaming upon request.")
 		else: labelText=_("Check to enable metadata streaming, uncheck to disable.")
 		metadataSizerHelper.addItem(wx.StaticText(self, label=labelText))
 
@@ -1126,13 +1134,15 @@ class MetadataStreamingDialog(wx.Dialog):
 		self.checkedStreams = []
 		# Add checkboxes for each stream, beginning with the DSP encoder.
 		sizer = gui.guiHelper.BoxSizerHelper(self, orientation=wx.HORIZONTAL)
-		for stream in xrange(5):
+		from . import splmisc
+		streams = splmisc.metadataList()
+		for stream in rangeGen(5):
 			self.checkedStreams.append(sizer.addItem(wx.CheckBox(self, label=streamLabels[stream])))
-			if func: self.checkedStreams[-1].SetValue(func(stream, 36, ret=True))
+			if not configDialogActive: self.checkedStreams[-1].SetValue(streams[stream])
 			else: self.checkedStreams[-1].SetValue(self.Parent.metadataStreams[stream])
 		metadataSizerHelper.addItem(sizer.sizer, border = gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
 
-		if self.func is not None:
+		if not configDialogActive:
 			# Translators: A checkbox to let metadata streaming status be applied to the currently active broadcast profile.
 			self.applyCheckbox = metadataSizerHelper.addItem(wx.CheckBox(self, label=_("&Apply streaming changes to the selected profile")))
 			self.applyCheckbox.SetValue(True)
@@ -1148,27 +1158,24 @@ class MetadataStreamingDialog(wx.Dialog):
 
 	def onOk(self, evt):
 		global _metadataDialogOpened
-		if self.func is None: parent = self.Parent
-		metadataEnabled = []
-		for url in xrange(5):
-			if self.func is None: parent.metadataStreams[url] = self.checkedStreams[url].Value
-			else:
-				dataLo = 0x00010000 if self.checkedStreams[url].Value else 0xffff0000
-				self.func(dataLo | url, 36)
-				if self.applyCheckbox.Value: metadataEnabled.append(self.checkedStreams[url].Value)
-		if self.func is None:
+		# Prepare checkbox values first for various reasons.
+		metadataEnabled = [self.checkedStreams[url].Value for url in rangeGen(5)]
+		if self.configDialogActive:
+			parent = self.Parent
+			parent.metadataStreams = metadataEnabled
 			parent.profiles.SetFocus()
 			parent.Enable()
 		else:
+			from . import splmisc
+			splmisc.metadataConnector(servers=metadataEnabled)
 			# 6.1: Store just toggled settings to profile if told to do so.
-			if len(metadataEnabled): splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"] = metadataEnabled
+			if self.applyCheckbox.Value: splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"] = metadataEnabled
 		self.Destroy()
 		_metadataDialogOpened = False
-		return
 
 	def onCancel(self, evt):
 		global _metadataDialogOpened
-		if self.func is None: self.Parent.Enable()
+		if self.configDialogActive: self.Parent.Enable()
 		self.Destroy()
 		_metadataDialogOpened = False
 
@@ -1313,7 +1320,7 @@ class ColumnsExplorerDialog(wx.Dialog):
 		# 7.0: Studio 5.0x columns.
 		# 17.04: Five by two grid layout as 5.0x is no longer supported.
 		sizer = gui.guiHelper.BoxSizerHelper(self, orientation=wx.HORIZONTAL)
-		for slot in xrange(5):
+		for slot in rangeGen(5):
 			# Translators: The label for a setting in SPL add-on dialog to select column for this column slot.
 			columns = sizer.addLabeledControl(_("Slot {position}").format(position = slot+1), wx.Choice, choices=cols)
 			try:
@@ -1324,7 +1331,7 @@ class ColumnsExplorerDialog(wx.Dialog):
 		colExplorerHelper.addItem(sizer.sizer, border = gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
 
 		sizer = gui.guiHelper.BoxSizerHelper(self, orientation=wx.HORIZONTAL)
-		for slot in xrange(5, 10):
+		for slot in rangeGen(5, 10):
 			columns = sizer.addLabeledControl(_("Slot {position}").format(position = slot+1), wx.Choice, choices=cols)
 			try:
 				columns.SetSelection(cols.index(parent.exploreColumns[slot] if not tt else parent.exploreColumnsTT[slot]))
@@ -1345,7 +1352,7 @@ class ColumnsExplorerDialog(wx.Dialog):
 	def onOk(self, evt):
 		parent = self.Parent
 		slots = parent.exploreColumns if not self.trackTool else parent.exploreColumnsTT
-		for slot in xrange(len(self.columnSlots)):
+		for slot in rangeGen(len(self.columnSlots)):
 			slots[slot] = self.columnSlots[slot].GetStringSelection()
 		parent.profiles.SetFocus()
 		parent.Enable()
@@ -1426,7 +1433,8 @@ class SayStatusDialog(wx.Dialog):
 class AdvancedOptionsDialog(wx.Dialog):
 
 	# Available channels (if there's only one, channel selection list will not be shown).
-	_updateChannels = ("try", "dev", "stable")
+	# Prepare for a day when channels list is NULL.
+	_updateChannels = ["try", "dev", "stable"]
 
 	def __init__(self, parent):
 		# Translators: The title of a dialog to configure advanced SPL add-on options such as update checking.
@@ -1435,19 +1443,20 @@ class AdvancedOptionsDialog(wx.Dialog):
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		advOptionsHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 
-		# Translators: A checkbox to toggle automatic add-on updates.
-		self.autoUpdateCheckbox=advOptionsHelper.addItem(wx.CheckBox(self,label=_("Automatically check for add-on &updates")))
-		self.autoUpdateCheckbox.SetValue(self.Parent.autoUpdateCheck)
-		# Translators: The label for a setting in SPL add-on settings/advanced options to select automatic update interval in days.
-		self.updateInterval=advOptionsHelper.addLabeledControl(_("Update &interval in days"), gui.nvdaControls.SelectOnFocusSpinCtrl, min=0, max=180, initial=self.Parent.updateInterval)
+		# #48 (18.02): do not show auto-update checkbox and interval options if not needed.
+		# The exception will be custom try builds.
+		if splupdate.isAddonUpdatingSupported() == splupdate.SPLUpdateErrorNone:
+			# Translators: A checkbox to toggle automatic add-on updates.
+			self.autoUpdateCheckbox=advOptionsHelper.addItem(wx.CheckBox(self,label=_("Automatically check for add-on &updates")))
+			self.autoUpdateCheckbox.SetValue(self.Parent.autoUpdateCheck)
+			# Translators: The label for a setting in SPL add-on settings/advanced options to select automatic update interval in days.
+			self.updateInterval=advOptionsHelper.addLabeledControl(_("Update &interval in days"), gui.nvdaControls.SelectOnFocusSpinCtrl, min=0, max=180, initial=self.Parent.updateInterval)
+		else: self._updateChannels = [None]
 		# For releases that support channel switching.
 		if len(self._updateChannels) > 1:
 			# Translators: The label for a combo box to select update channel.
 			labelText = _("&Add-on update channel:")
-			if sys.getwindowsversion().build >= 7601: self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["Test Drive Fast", "Test Drive Slow", "stable"])
-			else:
-				self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["stable", "longterm"])
-				self._updateChannels = ("stable", "lts")
+			self.channels=advOptionsHelper.addLabeledControl(labelText, wx.Choice, choices=["Test Drive Fast", "Test Drive Slow", "stable"])
 			self.channels.SetSelection(self._updateChannels.index(self.Parent.updateChannel))
 		# Translators: A checkbox to toggle if SPL Controller command can be used to invoke Assistant layer.
 		self.splConPassthroughCheckbox=advOptionsHelper.addItem(wx.CheckBox(self, label=_("Allow SPL C&ontroller command to invoke SPL Assistant layer")))
@@ -1470,10 +1479,14 @@ class AdvancedOptionsDialog(wx.Dialog):
 		mainSizer.Add(advOptionsHelper.sizer, border=gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
 		mainSizer.Fit(self)
 		self.Sizer = mainSizer
-		self.autoUpdateCheckbox.SetFocus()
+		try:
+			self.autoUpdateCheckbox.SetFocus()
+		except AttributeError:
+			self.splConPassthroughCheckbox.SetFocus()
 		self.Center(wx.BOTH | CENTER_ON_SCREEN)
 
 	def onOk(self, evt):
+		addonUpdatingSupported = splupdate.isAddonUpdatingSupported() == splupdate.SPLUpdateErrorNone
 		# The try (fast ring) builds aren't for the faint of heart.
 		# 17.10: nor for old Windows releases anymore.
 		if len(self._updateChannels) > 1:
@@ -1488,21 +1501,23 @@ class AdvancedOptionsDialog(wx.Dialog):
 					wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self
 				) == wx.NO:
 					return
-		# If update interval is set to zero, update check will happen every time the app module loads, so warn users.
-		updateInterval = self.updateInterval.Value
-		if self.Parent.updateInterval > 0 and updateInterval == 0 and gui.messageBox(
-			# Translators: The confirmation prompt displayed when changing update interval to zero days (updates will be checked every time Studio app module loads).
-			_("Update interval has been set to zero days, so updates to the Studio add-on will be checked every time NVDA and/or Studio starts. Are you sure you wish to continue?"),
-			# Translators: The title of the update interval dialog.
-			_("Confirm update interval"),
-			wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self
-		) == wx.NO:
-			return
+		if addonUpdatingSupported:
+			# If update interval is set to zero, update check will happen every time the app module loads, so warn users.
+			updateInterval = self.updateInterval.Value
+			if self.Parent.updateInterval > 0 and updateInterval == 0 and gui.messageBox(
+				# Translators: The confirmation prompt displayed when changing update interval to zero days (updates will be checked every time Studio app module loads).
+				_("Update interval has been set to zero days, so updates to the Studio add-on will be checked every time NVDA and/or Studio starts. Are you sure you wish to continue?"),
+				# Translators: The title of the update interval dialog.
+				_("Confirm update interval"),
+				wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self
+			) == wx.NO:
+				return
 		parent = self.Parent
 		parent.splConPassthrough = self.splConPassthroughCheckbox.Value
 		parent.compLayer = self.compatibilityLayouts[self.compatibilityList.GetSelection()][0]
-		parent.autoUpdateCheck = self.autoUpdateCheckbox.Value
-		parent.updateInterval = updateInterval
+		if addonUpdatingSupported:
+			parent.autoUpdateCheck = self.autoUpdateCheckbox.Value
+			parent.updateInterval = updateInterval
 		if len(self._updateChannels) > 1: parent.updateChannel = self._updateChannels[self.channels.GetSelection()]
 		parent.profiles.SetFocus()
 		parent.Enable()
@@ -1562,7 +1577,7 @@ class ResetDialog(wx.Dialog):
 			if self.resetInstantProfileCheckbox.Value:
 				if splconfig.SPLConfig.instantSwitch is not None:
 					splconfig.SPLConfig.instantSwitch = None
-					splconfig.SPLPrevProfile = None
+					splconfig.SPLConfig.prevProfile = None
 			if self.resetTimeProfileCheckbox.Value:
 				splconfig.profileTriggers.clear()
 				if splconfig.triggerTimer is not None and splconfig.triggerTimer.IsRunning():

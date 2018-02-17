@@ -1,6 +1,6 @@
 # StationPlaylist Studio update checker
 # A support module for SPL add-on
-# Copyright 2015-2017 Joseph Lee, released under GPL.
+# Copyright 2015-2018 Joseph Lee, released under GPL.
 
 # Provides update check facility, basics borrowed from NVDA Core's update checker class.
 
@@ -21,7 +21,11 @@ import gui
 import wx
 import addonHandler
 import globalVars
-import updateCheck
+# There are times when update check should not be supported.
+try:
+	import updateCheck
+except RuntimeError:
+	pass
 
 # Add-on manifest routine (credit: various add-on authors including Noelia Martinez).
 # Do not rely on using absolute path to open to manifest, as installation directory may change in a future NVDA Core version (highly unlikely, but...).
@@ -69,6 +73,13 @@ def initialize():
 		SPLAddonState["PDT"] = 0
 		_updateNow = False
 		SPLUpdateChannel = "dev"
+	# Check for add-on update if told to do so.
+	from . import splconfig, spldebugging
+	if canUpdate() and (splconfig.SPLConfig["Update"]["AutoUpdateCheck"] or _updateNow):
+		spldebugging.debugOutput("checking for add-on updates from %s channel"%SPLUpdateChannel)
+		# 7.0: Have a timer call the update function indirectly.
+		import queueHandler
+		queueHandler.queueFunction(queueHandler.eventQueue, splconfig.updateInit)
 
 def terminate():
 	global SPLAddonState
@@ -83,12 +94,69 @@ def terminate():
 		pickle.dump(SPLAddonState, file(_updatePickle, "wb"))
 	SPLAddonState = None
 
+SPLUpdateErrorNone = 0
+SPLUpdateErrorGeneric = 1
+SPLUpdateErrorSecureMode = 2
+SPLUpdateErrorTryBuild = 3
+SPLUpdateErrorSource = 4
+SPLUpdateErrorAppx = 5
+SPLUpdateErrorAddonsManagerUpdate = 6
+SPLUpdateErrorNoNetConnection = 7
+
+# These conditions are set when NVDA starts and cannot be changed at runtime, hence major errors.
+# This means no update channel selection, no retrys, etc.
+SPLUpdateMajorErrors = (SPLUpdateErrorSecureMode, SPLUpdateErrorTryBuild, SPLUpdateErrorSource, SPLUpdateErrorAppx, SPLUpdateErrorAddonsManagerUpdate)
+
+updateErrorMessages={
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorGeneric: _("An error occured while checking for add-on update. Please check NVDA log for details."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorSecureMode: _("NVDA is in secure mode. Please restart with secure mode disabled before checking for add-on updates."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorTryBuild: _("This is a try build of StationPlaylist Studio add-on. Please install the latest stable release to receive updates again."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorSource: _("Update checking not supported while running NVDA from source. Please run this add-on from an installed or a portable version of NVDA."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorAppx: _("This is a Windows Store version of NVDA. Add-on updating is supported on desktop version of NVDA."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorAddonsManagerUpdate: _("Cannot update add-on directly. Please check for add-on updates by going to add-ons manager."),
+	# Translators: one of the error messages when trying to update the add-on.
+	SPLUpdateErrorNoNetConnection: _("No internet connection. Please connect to the internet before checking for add-on update."),
+}
+
+# Only applicable for custom try builds.
+_customTryBuild = False
+
+# Check to really make sure add-on updating is supported.
+# Contrary to its name, 0 means yes, otherwise no.
+# For most cases, it'll return no errors except for scenarios outlined below.
+# The generic error (1) is meant to catch all errors not listed here, and for now, not used.
+def isAddonUpdatingSupported():
+	if globalVars.appArgs.secure:
+		return SPLUpdateErrorSecureMode
+	if _customTryBuild:
+		return SPLUpdateErrorTryBuild
+	import versionInfo
+	if not versionInfo.updateVersionType:
+		return SPLUpdateErrorSource
+	# NVDA 2018.1 and later.
+	import config
+	if hasattr(config, "isAppX") and config.isAppX:
+		return SPLUpdateErrorAppx
+	# Provided that NVDA issue 3208 is implemented.
+	if hasattr(addonHandler, "checkForAddonUpdate"):
+		return SPLUpdateErrorAddonsManagerUpdate
+	return SPLUpdateErrorNone
+
+def canUpdate():
+	return isAddonUpdatingSupported() == SPLUpdateErrorNone
+
 def checkForAddonUpdate():
 	updateURL = SPLUpdateURL if SPLUpdateChannel not in channels else channels[SPLUpdateChannel]
 	# Skip ahead:
-	import versionInfo
-	if SPLUpdateChannel == "try" and (versionInfo.version_year, versionInfo.version_major) >= (2017, 4):
-		updateURL = "http://www.josephsl.net/files/nvdaaddons/getupdate.php?file=spl-tryahead"
+	#import versionInfo
+	#if SPLUpdateChannel == "try" and (versionInfo.version_year, versionInfo.version_major) >= (2017, 4):
+		#updateURL = "http://www.josephsl.net/files/nvdaaddons/getupdate.php?file=spl-tryahead"
 	# Skip ahead end
 	try:
 		# Look up the channel if different from the default.
@@ -140,13 +208,12 @@ def updateChecker(auto=False, continuous=False, confUpdateInterval=1):
 	try:
 		info = checkForAddonUpdate()
 	except:
-		log.debugWarning("Error checking for update", exc_info=True)
+		log.error("Error checking for update", exc_info=True)
 		_retryAfterFailure = True
 		if not auto:
 			wx.CallAfter(_progressDialog.done)
 			_progressDialog = None
-			# Translators: Error text shown when add-on update check fails.
-			wx.CallAfter(gui.messageBox, _("Error checking for update."), _("Studio add-on update"), wx.ICON_ERROR)
+			wx.CallAfter(gui.messageBox, updateErrorMessages[SPLUpdateErrorGeneric], _("Studio add-on update"), wx.ICON_ERROR)
 		if continuous: _SPLUpdateT.Start(600000, True)
 		return
 	if _retryAfterFailure:
@@ -185,7 +252,11 @@ class SPLUpdateDownloader(updateCheck.UpdateDownloader):
 		@param fileHash: The SHA-1 hash of the file as a hex string.
 		@type fileHash: basestring
 		"""
-		super(SPLUpdateDownloader, self).__init__(urls, fileHash)
+		# In recent NVDA next snapshots (February 2018), update downloader was changed to take in update info dictionary.
+		try:
+			super(SPLUpdateDownloader, self).__init__(urls, fileHash)
+		except:
+			pass
 		self.urls = urls
 		self.destPath = tempfile.mktemp(prefix="stationPlaylist_update-", suffix=".nvda-addon")
 		self.fileHash = fileHash
