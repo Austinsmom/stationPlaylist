@@ -296,6 +296,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 
 	def onCancel(self, evt):
 		global _configDialogOpened
+		_configDialogOpened = False
 		# 6.1: Discard changes to included columns set.
 		if self.includedColumns is not None: self.includedColumns.clear()
 		self.includedColumns = None
@@ -314,7 +315,6 @@ class SPLConfigDialog(gui.SettingsDialog):
 			prevActive = _("Normal profile")
 		if self.switchProfileRenamed or self.switchProfileDeleted:
 			splconfig.SPLConfig.instantSwitch = self.switchProfile
-		_configDialogOpened = False
 		super(SPLConfigDialog,  self).onCancel(evt)
 
 	# Perform extra action when closing this dialog such as restarting update timer.
@@ -323,8 +323,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 		# #50 (18.03): but only if add-on update facility is alive.
 		if splupdate:
 			if not splconfig.SPLConfig["Update"]["AutoUpdateCheck"] or self.pendingChannelChange:
-				if splupdate._SPLUpdateT is not None and splupdate._SPLUpdateT.IsRunning(): splupdate._SPLUpdateT.Stop()
-				splupdate._SPLUpdateT = None
+				splupdate.updateCheckTimerEnd()
 				if self.pendingChannelChange:
 					splupdate._pendingChannelChange = True
 					# Translators: A dialog message shown when add-on update channel has changed.
@@ -332,7 +331,7 @@ class SPLConfigDialog(gui.SettingsDialog):
 					# Translators: Title of the update channel dialog.
 					_("Add-on update channel changed"), wx.OK|wx.ICON_INFORMATION)
 			else:
-				if splupdate._SPLUpdateT is None: splconfig.updateInit()
+				if splupdate._SPLUpdateT is None: splupdate.updateInit()
 		# Change metadata streaming.
 		# 17.11: call the metadata connector directly, reducing code duplication from previous releases.
 		# 17.12: replaced by an action, with config UI active flag set.
@@ -488,6 +487,13 @@ class SPLConfigDialog(gui.SettingsDialog):
 
 	def onTriggers(self, evt):
 		self.Disable()
+		if splconfig._triggerProfileActive:
+					# Translators: Message reported when attempting to change profile switch trigger while broadcasting.
+			gui.messageBox(_("You cannot change profile switch triggers in the midst of a broadcast."),
+				# Translators: Title of a dialog shown when profile trigger cannot e changd.
+				_("Profile triggers"), wx.OK | wx.ICON_ERROR, self)
+			self.Enable()
+			return
 		TriggersDialog(self, self.profileNames[self.profiles.Selection]).Show()
 
 	# Obtain profile flags for a given profile.
@@ -1451,7 +1457,7 @@ class AdvancedOptionsDialog(wx.Dialog):
 
 		# #48 (18.02): do not show auto-update checkbox and interval options if not needed.
 		# The exception will be custom try builds.
-		# #50 (18.03): made simpler because the update module won't be present if updating isn't supported.
+		# #50 (18.04): made simpler because the update module won't be present if updating isn't supported.
 		if splupdate and splupdate.isAddonUpdatingSupported() == splupdate.SPLUpdateErrorNone:
 			# Translators: A checkbox to toggle automatic add-on updates.
 			self.autoUpdateCheckbox=advOptionsHelper.addItem(wx.CheckBox(self,label=_("Automatically check for add-on &updates")))

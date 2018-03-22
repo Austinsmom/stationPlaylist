@@ -386,9 +386,12 @@ class SPLCountdownTimer(object):
 # Metadata and encoders management, including connection, announcement and so on.
 
 # Gather streaming flags into a list.
-def metadataList(handle=None):
-	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
-	return [sendMessage(handle, 1024, pos, 36) for pos in rangeGen(5)]
+# 18.04: raise runtime error if list is nothing (thankfully the splbase's StudioAPI will return None if Studio handle is not found).
+def metadataList():
+	metadata = [splbase.studioAPI(pos, 36) for pos in rangeGen(5)]
+	if metadata == [None, None, None, None, None]:
+		raise RuntimeError("Studio handle not found, no metadata list to return")
+	return metadata
 
 # Metadata server connector, to be utilized from many modules.
 # Servers refer to a list of connection flags to pass to Studio API, and if not present, will be pulled from add-on settings.
@@ -403,9 +406,13 @@ def metadataConnector(handle=None, servers=None):
 		sendMessage(handle, 1024, dataLo | url, 36)
 
 # Metadata status formatter.
-def metadataStatus(handle=None):
-	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
-	streams = metadataList(handle=handle)
+# 18.04: say something if Studio handle is not found.
+def metadataStatus():
+	try:
+		streams = metadataList()
+	except RuntimeError:
+		# Translators: presented when metadata streaming status cannot be obtained.
+		return _("Cannot obtain metadata streaming status information")
 	# DSP is treated specially.
 	dsp = streams[0]
 	# For others, a simple list.append will do.
@@ -460,17 +467,23 @@ def _earlyMetadataAnnouncerInternal(status):
 # To preserve backward compatibility, let the announcer call individual functions above for a while.
 def _metadataAnnouncer(reminder=False, handle=None):
 	if handle is None: handle = user32.FindWindowA("SPLStudio", None)
+	global _delayMetadataAction
+	_delayMetadataAction = False
 	# If told to remind and connect, metadata streaming will be enabled at this time.
 	# 6.0: Call Studio API twice - once to set, once more to obtain the needed information.
 	# 6.2/7.0: When Studio API is called, add the value into the stream count list also.
 	# 17.11: call the connector.
-	if reminder: metadataConnector(handle=handle)
+	if reminder: metadataConnector()
 	# Gather stream flags.
-	status = metadataStatus(handle=handle)
+	# 18.04: hopefully the error message won't be shown as this is supposed to run right after locating Studio handle.
+	status = metadataStatus()
 	# #40 (18.02): call the internal announcer in order to not hold up action handler queue.
-	# #51 (18.03/15.14-LTS): if this is called within two seconds (status time-out), stuats will be announced multiple times.
+	# #51 (18.03/15.14-LTS): if this is called within two seconds (status time-out), status will be announced multiple times.
 	if reminder: _earlyMetadataAnnouncerInternal(status)
 	else: ui.message(status)
+
+# Delay the action handler if Studio handle is not found.
+_delayMetadataAction = False
 
 # Connect and/or announce metadata status when broadcast profile switching occurs.
 # The config dialog active flag is only invoked when being notified while add-on settings dialog is focused.
@@ -480,6 +493,7 @@ def metadata_actionProfileSwitched(configDialogActive=False):
 	if configDialogActive:
 		metadataConnector(servers=splconfig.SPLConfig["MetadataStreaming"]["MetadataEnabled"])
 		return
+	global _delayMetadataAction
 	# Ordinarily, errors would have been dealt with, but Action.notify will catch errors and log messages.
 	# #40 (18.02): the only possible error is if Studio handle is invalid, which won't be the case, otherwise no point handling this action.
 	# #49 (18.03): no, don't announce this if the app module is told to announce metadata status at startup only.
@@ -489,9 +503,15 @@ def metadata_actionProfileSwitched(configDialogActive=False):
 		# 6.2/7.0: When Studio API is called, add the value into the stream count list also.
 		# 17.11: call the connector.
 		# 18.02: transfered to the action handler and greatly simplified.
+		# 18.04: ask the handle finder to return to this place if Studio handle isn't ready.
+		# This is typically the case when launching Studio and profile switch occurs while demo registration screen is up.
 		handle = user32.FindWindowA("SPLStudio", None)
-		metadataConnector(handle=handle)
-		# #51 (18.03/15.14-LTS): wx.CallLater isn't enough - there must be ability to cancel it.# #47 (18.02/15.13-LTS): call the internal announcer via wx.CallLater in order to not hold up action handler queue.
-		_earlyMetadataAnnouncerInternal(metadataStatus(handle=handle))
+		if not handle:
+			_delayMetadataAction = True
+			return
+		metadataConnector()
+		# #47 (18.02/15.13-LTS): call the internal announcer via wx.CallLater in order to not hold up action handler queue.
+		# #51 (18.03/15.14-LTS): wx.CallLater isn't enough - there must be ability to cancel it.
+		_earlyMetadataAnnouncerInternal(metadataStatus())
 
 splactions.SPLActionProfileSwitched.register(metadata_actionProfileSwitched)

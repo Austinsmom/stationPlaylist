@@ -8,7 +8,7 @@
 # Additional work done by Joseph Lee and other contributors.
 # For SPL Studio Controller, focus movement, SAM Encoder support and other utilities, see the global plugin version of this app module.
 
-# Minimum version: SPL 5.10, NvDA 2016.4.
+# Minimum version: SPL 5.10, NvDA 2017.4.
 
 import sys
 py3 = sys.version.startswith("3")
@@ -162,6 +162,11 @@ class SPLTrackItem(IAccessible):
 	def _get_locationText(self):
 		# Translators: location text for a playlist item (example: item 1 of 10).
 		return _("Item {current} of {total}").format(current = self.IAccessibleChildID, total = splbase.studioAPI(0, 124))
+
+	# #12 (18.04): select and set focus to this track.
+	def doAction(self, index=None):
+		splbase.selectTrack(self.IAccessibleChildID-1)
+		self.setFocus(), self.setFocus()
 
 	# Some helper functions to handle corner cases.
 	# Each track item provides its own version.
@@ -561,6 +566,7 @@ class AppModule(appModuleHandler.AppModule):
 	_columnHeaderNames = None
 	_focusedTrack = None
 	_announceColumnOnly = None # Used only if vertical column navigation commands are used.
+	_SPLStudioMonitor = None # Monitor Studio API routines.
 
 	# Prepare the settings dialog among other things.
 	def __init__(self, *args, **kwargs):
@@ -626,9 +632,28 @@ class AppModule(appModuleHandler.AppModule):
 		with threading.Lock() as hwndNotifier:
 			splbase._SPLWin = hwnd
 			debugOutput("Studio handle is %s"%hwnd)
+		# #41 (18.04): start background monitor.
+		self._SPLStudioMonitor = wx.PyTimer(self.studioAPIMonitor)
+		wx.CallAfter(self._SPLStudioMonitor.Start, 1000)
 		# Remind me to broadcast metadata information.
-		if splconfig.SPLConfig["General"]["MetadataReminder"] == "startup":
-			self._metadataAnnouncer(reminder=True)
+		# 18.04: also when delayed action is needed because metadata action handler couldn't locate Studio handle itself.
+		if splconfig.SPLConfig["General"]["MetadataReminder"] == "startup" or splmisc._delayMetadataAction:
+			splmisc._metadataAnnouncer(reminder=True, handle=hwnd)
+
+	# Studio API heartbeat.
+	# Although useful for library scan detection, it can be extended to cover other features.
+
+	def studioAPIMonitor(self):
+		# Only proceed if Studio handle is valid.
+		if not user32.FindWindowA("SPLStudio", None):
+			if self._SPLStudioMonitor is not None:
+				self._SPLStudioMonitor.Stop()
+				self._SPLStudioMonitor = None
+				return
+		# #41 (18.04): background library scan detection.
+		# Thankfully, current lib scan reporter function will not proceed when library scan is happening via Insert Tracks dialog.
+		if splbase.studioAPI(1, 32) >= 0:
+			if not self.libraryScanning: self.script_libraryScanMonitor(None)
 
 	# Let the global plugin know if SPLController passthrough is allowed.
 	def SPLConPassthrough(self):
@@ -887,6 +912,15 @@ class AppModule(appModuleHandler.AppModule):
 	def terminate(self):
 		super(AppModule, self).terminate()
 		debugOutput("terminating app module")
+		# Save update check state.
+		# 18.04: do it from the app module to enforce separation of concerns.
+		try:
+			from . import splupdate
+		except RuntimeError:
+			pass
+		else:
+			debugOutput("terminating update check")
+			splupdate.terminate()
 		# 6.3: Memory leak results if encoder flag sets and other encoder support maps aren't cleaned up.
 		# This also could have allowed a hacker to modify the flags set (highly unlikely) so NvDA could get confused next time Studio loads.
 		if "globalPlugins.splUtils.encoders" in sys.modules:
@@ -910,9 +944,14 @@ class AppModule(appModuleHandler.AppModule):
 		if self._focusedTrack: self._focusedTrack.__class__._curColumnNumber = None
 		# Delete focused track reference.
 		self._focusedTrack = None
+		# #41: We're done monitoring Studio API.
+		if self._SPLStudioMonitor is not None:
+			self._SPLStudioMonitor.Stop()
+			self._SPLStudioMonitor = None
+		# #54 (18.04): no more PyDeadObjectError in wxPython 4, so catch ALL exceptions until NVDA stable release with wxPython 4 is out.
 		try:
 			self.prefsMenu.RemoveItem(self.SPLSettings)
-		except (RuntimeError, AttributeError, wx.PyDeadObjectError):
+		except: #(RuntimeError, AttributeError):
 			pass
 		# Tell the handle finder thread it's time to leave this world.
 		self.noMoreHandle.set()
@@ -1326,7 +1365,7 @@ class AppModule(appModuleHandler.AppModule):
 		fg = api.getForegroundObject()
 		if fg.windowClassName == "TTrackInsertForm":
 			# Translators: Presented when library scan has started.
-			ui.message(_("Scan start"))
+			ui.message(_("Scan start")) if not splconfig.SPLConfig["General"]["BeepAnnounce"] else tones.beep(740, 100)
 			if self.productVersion not in noLibScanMonitor: self.libraryScanning = True
 
 	# Report library scan (number of items scanned) in the background.
@@ -1356,7 +1395,7 @@ class AppModule(appModuleHandler.AppModule):
 		# 17.04: Use the constant directly, as 5.10 and later provides a convenient method to detect completion of library scans.
 		scanCount = splbase.studioAPI(1, 32)
 		while scanCount >= 0:
-			if not self.libraryScanning: return
+			if not self.libraryScanning or not user32.FindWindowA("SPLStudio", None): return
 			time.sleep(1)
 			# Do not continue if we're back on insert tracks form or library scan is finished.
 			if api.getForegroundObject().windowClassName == "TTrackInsertForm" or not self.libraryScanning:
@@ -1369,8 +1408,8 @@ class AppModule(appModuleHandler.AppModule):
 			if scanIter%5 == 0 and splconfig.SPLConfig["General"]["LibraryScanAnnounce"] not in ("off", "ending"):
 				self._libraryScanAnnouncer(scanCount, splconfig.SPLConfig["General"]["LibraryScanAnnounce"])
 		self.libraryScanning = False
-		if self.backgroundStatusMonitor: return
-		if splconfig.SPLConfig["General"]["LibraryScanAnnounce"] != "off":
+		# 18.04: what if config database died?
+		if splconfig.SPLConfig and splconfig.SPLConfig["General"]["LibraryScanAnnounce"] != "off":
 			if splconfig.SPLConfig["General"]["BeepAnnounce"]:
 				tones.beep(370, 100)
 			else:
@@ -1410,11 +1449,6 @@ class AppModule(appModuleHandler.AppModule):
 	# Metadata streaming manager
 	# Obtains information on metadata streaming for each URL, notifying the broadcaster if told to do so upon startup.
 	# Also allows broadcasters to toggle metadata streaming.
-
-	# First, the reminder function.
-	# 7.0: Calls the module-level version.
-	def _metadataAnnouncer(self, reminder=False):
-		splmisc._metadataAnnouncer(reminder=reminder, handle=splbase._SPLWin)
 
 	# The script version to open the manage metadata URL's dialog.
 	def script_manageMetadataStreams(self, gesture):
@@ -1539,7 +1573,11 @@ class AppModule(appModuleHandler.AppModule):
 			snapshot["PlaylistDurationMin"] = "%s (%s)"%(minTitle, min)
 			snapshot["PlaylistDurationMax"] = "%s (%s)"%(maxTitle, max)
 		if "DurationAverage" in snapshotFlags:
-			snapshot["PlaylistDurationAverage"] = self._ms2time(totalDuration/snapshot["PlaylistTrackCount"], ms=False)
+			# #57 (18.04): zero division error may occur if the playlist consists of hour markers only.
+			try:
+				snapshot["PlaylistDurationAverage"] = self._ms2time(totalDuration/snapshot["PlaylistTrackCount"], ms=False)
+			except ZeroDivisionError:
+				snapshot["PlaylistDurationAverage"] = "00:00"
 		if "CategoryCount" in snapshotFlags or "ArtistCount" in snapshotFlags or "GenreCount" in snapshotFlags:
 			import collections
 			if "CategoryCount" in snapshotFlags: snapshot["PlaylistCategoryCount"] = collections.Counter(categories)
@@ -1547,8 +1585,9 @@ class AppModule(appModuleHandler.AppModule):
 			if "GenreCount" in snapshotFlags: snapshot["PlaylistGenreCount"] = collections.Counter(genres)
 		return snapshot
 
-# Output formatter for playlist snapshots.
-# Pressed once will speak and/or braille it, pressing twice or more will output this info to an HTML file.
+	# Output formatter for playlist snapshots.
+	# Pressing once will speak and/or braille it, pressing twice or more will output this info to an HTML file.
+
 	def playlistSnapshotOutput(self, snapshot, scriptCount):
 		# Translators: one of the results for playlist snapshots feature for announcing total number of items in a playlist.
 		statusInfo = [_("Items: {playlistItemCount}").format(playlistItemCount = snapshot["PlaylistItemCount"])]
@@ -1568,8 +1607,11 @@ class AppModule(appModuleHandler.AppModule):
 			artistCount = splconfig.SPLConfig["PlaylistSnapshots"]["ArtistCountLimit"]
 			artists = snapshot["PlaylistArtistCount"].most_common(None if not artistCount else artistCount)
 			if scriptCount == 0:
-				# Translators: one of the results for playlist snapshots feature for announcing top artist in a playlist.
-				statusInfo.append(_("Top artist: %s (%s)")%(artists[0][:]))
+				try:
+					# Translators: one of the results for playlist snapshots feature for announcing top artist in a playlist.
+					statusInfo.append(_("Top artist: %s (%s)")%(artists[0][:]))
+				except IndexError:
+					statusInfo.append(_("Top artist: none"))
 			elif scriptCount == 1:
 				artistList = []
 				# Translators: one of the results for playlist snapshots feature, a heading for a group of items.
@@ -1603,8 +1645,11 @@ class AppModule(appModuleHandler.AppModule):
 			genreCount = splconfig.SPLConfig["PlaylistSnapshots"]["GenreCountLimit"]
 			genres = snapshot["PlaylistGenreCount"].most_common(None if not genreCount else genreCount)
 			if scriptCount == 0:
-				# Translators: one of the results for playlist snapshots feature for announcing top genre in a playlist.
-				statusInfo.append(_("Top genre: %s (%s)")%(genres[0][:]))
+				try:
+					# Translators: one of the results for playlist snapshots feature for announcing top genre in a playlist.
+					statusInfo.append(_("Top genre: %s (%s)")%(genres[0][:]))
+				except IndexError:
+					statusInfo.append(_("Top genre: none"))
 			elif scriptCount == 1:
 				genreList = []
 				# Translators: one of the results for playlist snapshots feature, a heading for a group of items.
@@ -1948,7 +1993,7 @@ class AppModule(appModuleHandler.AppModule):
 				return
 			self.libraryScanning = True
 			# Translators: Presented when attempting to start library scan.
-			ui.message(_("Monitoring library scan"))
+			ui.message(_("Monitoring library scan")) if not splconfig.SPLConfig["General"]["BeepAnnounce"] else tones.beep(740, 100)
 			self.monitorLibraryScan()
 		else:
 			# Translators: Presented when library scan is already in progress.

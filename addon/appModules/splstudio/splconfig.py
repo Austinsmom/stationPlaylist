@@ -27,8 +27,8 @@ try:
 	from . import splupdate
 except RuntimeError:
 	splupdate = None
-from .splmisc import SPLCountdownTimer, _metadataAnnouncer
 from . import splactions
+from . import spldebugging
 
 # Python 3 preparation (a compatibility layer until Six module is included).
 rangeGen = range if py3 else xrange
@@ -519,7 +519,8 @@ class ConfigHub(ChainMap):
 			# Translators: Presented when switching from instant switch profile to a previous profile.
 			ui.message(_("Returning to {previousProfile}").format(previousProfile = self.activeProfile))
 			# Resume auto update checker if told to do so.
-			if self["Update"]["AutoUpdateCheck"]: updateInit()
+			if self["Update"]["AutoUpdateCheck"]:
+				if splupdate: splupdate.updateInit()
 		# #38 (17.11/15.10-LTS): can't wait two seconds for microphone alarm to stop.
 		# #40 (17.12): all taken care of by profile switched notification.
 		splactions.SPLActionProfileSwitched.notify()
@@ -534,7 +535,13 @@ class ConfigHub(ChainMap):
 			raise RuntimeError("Instant switch flag is already on")
 		elif switchType == "timed" and self.timedSwitchProfileActive:
 			raise RuntimeError("Timed switch flag is already on")
+		spldebugging.debugOutput("Profile switching start: type = %s, previous profile is %s, new profile is %s"%(switchType, prevProfile, newProfile))
 		self.switchProfile(prevProfile, newProfile, switchFlags=self._switchProfileFlags ^ self._profileSwitchFlags[switchType])
+		# 8.0: Cache the new profile.
+		global _SPLCache
+		# 18.03: be sure to check if config cache is even online.
+		if _SPLCache is not None and newProfile != defaultProfileName and newProfile not in _SPLCache:
+			self._cacheConfig(self.profileByName(newProfile))
 
 	def switchProfileEnd(self, prevProfile, newProfile, switchType):
 		if switchType not in ("instant", "timed"):
@@ -543,6 +550,7 @@ class ConfigHub(ChainMap):
 			raise RuntimeError("Instant switch flag is already off")
 		elif switchType == "timed" and not self.timedSwitchProfileActive:
 			raise RuntimeError("Timed switch flag is already off")
+		spldebugging.debugOutput("Profile switching end: type = %s, previous profile is %s, new profile is %s"%(switchType, prevProfile, newProfile))
 		self.switchProfile(prevProfile, newProfile, switchFlags=self._switchProfileFlags ^ self._profileSwitchFlags[switchType])
 
 	# Used from config dialog and other places.
@@ -601,6 +609,7 @@ def initialize():
 	SPLConfig = ConfigHub()
 	# Locate instant profile and do something otherwise.
 	if SPLConfig.instantSwitch is not None and SPLConfig.instantSwitch not in SPLConfig.profileNames:
+		spldebugging.debugOutput("Failed to locate instant switch profile")
 		_configLoadStatus[SPLConfig.activeProfile] = "noInstantProfile"
 		SPLConfig.instantSwitch = None
 	# LTS: Load track comments if they exist.
@@ -672,11 +681,13 @@ def initProfileTriggers():
 	profileTriggers2 = dict(profileTriggers)
 	# Is the triggers dictionary and the config pool in sync?
 	if len(profileTriggers):
+		spldebugging.debugOutput("trigger profiles found, verifying existence of profiles")
 		nonexistent = []
 		for profile in list(profileTriggers.keys()):
 			try:
 				SPLConfig.profileIndexByName(profile)
 			except ValueError:
+				spldebugging.debugOutput("profile %s does not exist"%profile)
 				nonexistent.append(profile)
 				del profileTriggers[profile]
 		if len(nonexistent):
@@ -687,7 +698,7 @@ def initProfileTriggers():
 	triggerStart()
 
 # Locate time-based profiles if any.
-# A 3-tuple will be returned, containing the next trigger time (for time delta calculation), the profile name for this trigger time and whether an immediate switch is necessary.
+# A 4-tuple will be returned, containing the next trigger time (for time delta calculation), the profile name for this trigger time, whether an immediate switch is necessary, and if so, the duration delta for profiles with duration entry specified.
 def nextTimedProfile(current=None):
 	if current is None: current = datetime.datetime.now()
 	# No need to proceed if no timed profiles are defined.
@@ -700,10 +711,13 @@ def nextTimedProfile(current=None):
 		triggerTime = datetime.datetime(entry[1], entry[2], entry[3], entry[4], entry[5])
 		# Hopefully the trigger should be ready before the show, but sometimes it isn't.
 		if current > triggerTime:
-			profileTriggers[profile] = setNextTimedProfile(profile, entry[0], datetime.time(entry[4], entry[5]), date=current, duration=entry[6])
-			if (current-triggerTime).seconds < entry[6]*60:
-				shouldBeSwitched = True
-		possibleTriggers.append((triggerTime, profile, shouldBeSwitched))
+			# #52 (18.03/15.14-LTS): check the duration field first.
+			durationDelta = (current-triggerTime).seconds
+			if durationDelta < (entry[6]*60):
+				# Return the tuple immediately, as the show is more important.
+				return (triggerTime, profile, True, (entry[6]*60) - durationDelta)
+			else: profileTriggers[profile] = setNextTimedProfile(profile, entry[0], datetime.time(entry[4], entry[5]), date=current, duration=entry[6])
+		possibleTriggers.append((triggerTime, profile, shouldBeSwitched, None))
 	return min(possibleTriggers) if len(possibleTriggers) else None
 
 # Some helpers used in locating next air date/time.
@@ -780,7 +794,16 @@ def triggerStart(restart=False):
 		SPLConfig.timedSwitch = SPLTriggerProfile
 		# We are in the midst of a show, so switch now.
 		if queuedProfile[2]:
-			triggerProfileSwitch()
+			# Only come here if this is the first time this function is run (startup).
+			if not restart: triggerProfileSwitch(durationDelta = queuedProfile[3])
+			else:
+				# restart the timer if required.
+				global _SPLTriggerEndTimer
+				if _SPLTriggerEndTimer is not None and _SPLTriggerEndTimer.IsRunning():
+					_SPLTriggerEndTimer.Stop()
+					_SPLTriggerEndTimer = wx.PyTimer(triggerProfileSwitch)
+					_SPLTriggerEndTimer.Start(queuedProfile[3] * 1000, True)
+				else: triggerProfileSwitch(durationDelta = queuedProfile[3])
 		else:
 			switchAfter = (queuedProfile[0] - datetime.datetime.now())
 			if switchAfter.days == 0 and switchAfter.seconds <= 3600:
@@ -879,15 +902,11 @@ def terminate():
 		_SPLTriggerEndTimer = None
 		SPLConfig.switchProfile(None, SPLConfig.prevProfile, appTerminating=True)
 		_triggerProfileActive = False
-	# 7.0: Turn off auto update check timer.
-	if splupdate: splupdate.updateCheckTimerEnd()
 	# Close profile triggers dictionary.
 	# 17.10: but if only the normal profile is in use, it won't do anything.
 	if not SPLConfig.normalProfileOnly: saveProfileTriggers()
 	# Dump track comments.
 	pickle.dump(trackComments, file(os.path.join(globalVars.appArgs.configPath, "spltrackcomments.pickle"), "wb"))
-	# Save update check state.
-	if splupdate: splupdate.terminate()
 	# Now save profiles.
 	# 8.0: Call the save method.
 	SPLConfig.save()
@@ -936,7 +955,7 @@ def instantProfileSwitch():
 			# Pass in the prev profile, which will be None for instant profile switch.
 			# 7.0: Now activate "activeProfile" argument which controls the behavior of the function below.
 			# 8.0: Work directly with profile names.
-			# 18.04: call switch profile start method directly.
+			# 18.03: call switch profile start method directly.
 			# To the outside, a profile switch took place.
 			SPLConfig.switchProfileStart(SPLConfig.activeProfile, SPLSwitchProfile, "instant")
 		else:
@@ -947,7 +966,8 @@ _SPLTriggerEndTimer = None
 # Record if time-based profile is active or not.
 _triggerProfileActive = False
 
-def triggerProfileSwitch():
+# Duration delta refers to update profile switch duration (in seconds) while switching in the middle of a show.
+def triggerProfileSwitch(durationDelta=None):
 	global SPLConfig, triggerTimer, _SPLTriggerEndTimer, _triggerProfileActive
 	SPLTriggerProfile = SPLConfig.timedSwitch
 	if SPLTriggerProfile is None and _triggerProfileActive:
@@ -967,7 +987,7 @@ def triggerProfileSwitch():
 			profileTriggers[SPLTriggerProfile] = setNextTimedProfile(SPLTriggerProfile, triggerSettings[0], datetime.time(triggerSettings[4], triggerSettings[5]))
 		else:
 			_SPLTriggerEndTimer = wx.PyTimer(triggerProfileSwitch)
-			_SPLTriggerEndTimer.Start(triggerSettings[6] * 60 * 1000, True)
+			_SPLTriggerEndTimer.Start(triggerSettings[6] * 60 * 1000 if durationDelta is None else durationDelta * 1000, True)
 	else:
 		SPLConfig.switchProfileEnd(None, SPLConfig.prevProfile, "timed")
 		_triggerProfileActive = False
@@ -975,45 +995,6 @@ def triggerProfileSwitch():
 		if _SPLTriggerEndTimer is not None and _SPLTriggerEndTimer.IsRunning():
 			_SPLTriggerEndTimer.Stop()
 			_SPLTriggerEndTimer = None
-
-# Automatic update checker.
-
-# The function below is called as part of the update check timer.
-# Its only job is to call the update check function (splupdate) with the auto check enabled.
-# The update checker will not be engaged if secure mode flag is on, an instant switch profile is active, or it is not time to check for it yet (check will be done every 24 hours).
-def autoUpdateCheck():
-	if splupdate is None or globalVars.appArgs.secure: return
-	splupdate.updateChecker(auto=True, continuous=SPLConfig["Update"]["AutoUpdateCheck"], confUpdateInterval=SPLConfig["Update"]["UpdateInterval"])
-
-# The timer itself.
-# A bit simpler than NVDA Core's auto update checker.
-def updateInit():
-	# #48 (18.02/15.13-LTS): no, not when secure mode flag is on.
-	if splupdate is None or globalVars.appArgs.secure: return
-	# LTS: Launch updater if channel change is detected.
-	# Use a background thread for this as urllib blocks.
-	import threading
-	# 17.08: if update interval is zero (check whenever Studio starts), treat it as update now.
-	# #36: only the first part will be used later due to the fact that update checker will check current time versus next check time.
-	confUpdateInterval = SPLConfig["Update"]["UpdateInterval"]
-	if splupdate._updateNow or confUpdateInterval == 0:
-		t = threading.Thread(target=splupdate.updateChecker, kwargs={"auto": True, "confUpdateInterval": confUpdateInterval}) # No repeat here.
-		t.daemon = True
-		splupdate._SPLUpdateT = wx.PyTimer(autoUpdateCheck)
-		t.start()
-		splupdate._updateNow = False
-		return
-	# 17.09: Remove this whole thing, for now kept in 17.08 to minimize possible issues.
-	currentTime = time.time()
-	nextCheck = splupdate.SPLAddonCheck+(SPLConfig["Update"]["UpdateInterval"]* 86400.0)
-	if splupdate.SPLAddonCheck < currentTime < nextCheck:
-		interval = int(nextCheck - currentTime)
-	elif splupdate.SPLAddonCheck < nextCheck < currentTime:
-		interval = SPLConfig["Update"]["UpdateInterval"]* 86400
-		# Call the update check now.
-		t = threading.Thread(target=splupdate.updateChecker, kwargs={"auto": True, "confUpdateInterval": confUpdateInterval}) # No repeat here.
-		t.daemon = True
-		t.start()
 
 # Let SPL track item know if it needs to build description pieces.
 # To be renamed and used in other places in 7.0.

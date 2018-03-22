@@ -313,6 +313,25 @@ realizar algunas órdenes de Studio desde la pantalla táctil. Primero utiliza
 un toque con tres dedos para cambiar a modo SPL, entonces utiliza las
 órdenes táctiles listadas arriba para llevar a cabo tareas.
 
+## Versión 18.03/15.14-LTS
+
+* Si NVDA está configurado para anunciar el estado de emisión de metadatos
+  cuando Studio se inicia, NVDA atenderá a esta configuración y ya no
+  anunciará el estado de emisión al alternar desde y a perfiles de cambio
+  instantáneo.
+* Si se cambia desde o a un perfil de cambio instantáneo y NVDA está
+  configurado para anunciar el estado de emisión de metadatos cuando esto
+  ocurra, no se anunciará la información varias veces cuando se alternen
+  perfiles rápidamente.
+* NVDA recordará cambiar al perfil basado en horario (si se definió para un
+  evento) aunque se reinicie NVDA varias veces durante la emisión.
+* Si está activo un perfil basado en horario con la duración de perfil
+  establecida, NVDA volverá al perfil original cuando el perfil acabe aunque
+  se abra y se cierre el diálogo de configuración.
+* Si está activo un perfil basado en horario (particularmente durante la
+  transmisión), no será posible cambiar los disparadores del perfil de
+  emisión mediante el diálogo de configuración del complemento.
+
 ## Versión 18.02/15.13-LTS
 
 * 18.02: debido a los cambios internos realizados para soportar puntos de

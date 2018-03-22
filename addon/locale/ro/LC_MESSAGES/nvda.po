@@ -8,7 +8,7 @@ msgstr ""
 "Project-Id-Version: stationPlaylist 6.4\n"
 "Report-Msgid-Bugs-To: nvda-translations@freelists.org\n"
 "POT-Creation-Date: 2016-03-04 19:00+1000\n"
-"PO-Revision-Date: 2018-01-27 11:15+0200\n"
+"PO-Revision-Date: 2018-02-23 20:59+0200\n"
 "Last-Translator: Florian Ionașcu <florianionascu@hotmail.com>\n"
 "Language-Team: \n"
 "Language: ro\n"
@@ -1279,6 +1279,14 @@ msgstr "Sigur doriți să ştergeți acest profil? Acest lucru este ireversibil.
 msgid "Confirm Deletion"
 msgstr "Confirmare ştergere"
 
+#. Translators: Message reported when attempting to change profile switch trigger while broadcasting.
+msgid "You cannot change profile switch triggers in the midst of a broadcast."
+msgstr "Nu puteți modifica declanșatoarele de profil în timpul unei emisiuni."
+
+#. Translators: Title of a dialog shown when profile trigger cannot e changd.
+msgid "Profile triggers"
+msgstr "Declanșatoare de profil"
+
 #. Translators: Presented when an alarm dialog is opened.
 msgid ""
 "Another add-on settings dialog is open. Please close the previously opened "
@@ -1772,6 +1780,7 @@ msgstr "Emisia metadata configurată pentru encoderul DSP și URL-ul {URL}"
 msgid "Metadata streaming configured for URL's {URL}"
 msgstr "Emisia metadata configurată pentru URL-ul {URL}"
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "An error occured while checking for add-on update. Please check NVDA log for "
 "details."
@@ -1779,6 +1788,7 @@ msgstr ""
 "A apărut o eroare în timp ce se căutau actualizările. Vă rugăm să verificați "
 "jurnalul NVDA pentru mai multe detalii."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "NVDA is in secure mode. Please restart with secure mode disabled before "
 "checking for add-on updates."
@@ -1786,6 +1796,7 @@ msgstr ""
 "NVDA este în modul de siguranță. Vă rugăm să-l reporniți cu modul de "
 "siguranță dezactivat înainte de a căuta actualizări."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "This is a try build of StationPlaylist Studio add-on. Please install the "
 "latest stable release to receive updates again."
@@ -1794,6 +1805,7 @@ msgstr ""
 "Studio. Vă rugăm să instalați versiunea stabilă pentru a primi actualizări "
 "din nou."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "Update checking not supported while running NVDA from source. Please run "
 "this add-on from an installed or a portable version of NVDA."
@@ -1802,6 +1814,7 @@ msgstr ""
 "sursă. Vă rugăm să rulați acest supliment dintr-o versiune instalată sau "
 "portabilă a NVDA."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "This is a Windows Store version of NVDA. Add-on updating is supported on "
 "desktop version of NVDA."
@@ -1809,6 +1822,7 @@ msgstr ""
 "Aceasta este o versiune NVDA de Windows Store. Actualizarea suplimentului "
 "este suportată în versiunea de desktop."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "Cannot update add-on directly. Please check for add-on updates by going to "
 "add-ons manager."
@@ -1816,6 +1830,7 @@ msgstr ""
 "Nu se poate actualiza suplimentul în mod direct. Vă rugăm să căutați "
 "actualizări înainte de a merge în administratorul de suplimente."
 
+#. Translators: one of the error messages when trying to update the add-on.
 msgid ""
 "No internet connection. Please connect to the internet before checking for "
 "add-on update."
